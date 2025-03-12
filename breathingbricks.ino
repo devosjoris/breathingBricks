@@ -8,7 +8,6 @@
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 
-
 #define PUMP_ON_TIME 30000 //time in ms
 #define SLEEP_TIME 86400000000ULL //24*3600*1E6 don't write it as a formula since that will cast it to long, it truncates to 500654080 which corresponds to 500s (9.5minutes)
 
@@ -55,14 +54,21 @@ bool shouldEndProgram = false;
 
 WiFiManager wifiManager;
 const char* server = "api.thingspeak.com";
-const char* writeAPIKey1 = "UPZ23G51STVNGGJ6";
-const char* writeAPIKey2 = "HU4OTXS60L17SS6X";
+//#define PRODUCTION //debug code we will log sensor values to website:::
+
+  const char* writeAPIKey1 = "UPZ23G51STVNGGJ6";
+  const char* writeAPIKey2 = "HU4OTXS60L17SS6X";
+
+  unsigned long Channel1 = 2413633; // Change to your channel number
+  unsigned long Channel2 = 2413649; // Change to your channel number
+  int myFieldNumber = 1; // Change to the field number you wish to update
+
+//the engineering mode thingspeak, for checking sensor performance
+  const char* writeAPIKey3 = "04QB4ERJUWODH4BC";
+  unsigned long Channel3 =2864883;
 
 //Connect to WebClient
 WiFiClient client;
-unsigned long Channel1 = 2413633; // Change to your channel number
-unsigned long Channel2 = 2413649; // Change to your channel number
-int myFieldNumber = 1; // Change to the field number you wish to update
 
 // Pin definitions
 
@@ -75,11 +81,9 @@ const int V3V3Pin =3;
 const int VBAT_DIV = 48;
 const int LED_PIN = 47;
 const int CHARGING_PIN = 14;
+const int  CSPin =10;//use for adc?
 
 RTC_DATA_ATTR int bootCount = 0; //sleep wakeup counter
-
-
-const int  CSPin =10;//use for adc?
 
 // Moisture sensor variables
 int moistureValue = 0;
@@ -98,7 +102,7 @@ String WaterLevel = "";
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 //lidar level sensor:
-#define USE_LIDAR  1
+#define USE_LIDAR  0
 
 uint32_t water_level = 0;
 #define low_THRESHOLD 200 //incm
@@ -116,23 +120,16 @@ Adafruit_VL6180X lox = Adafruit_VL6180X();
 #define VL53 0
 #define VL61 1
 
-void print_wakeup_reason(){
-  esp_sleep_wakeup_cause_t wakeup_reason;
+//led blinking
+uint8_t ProductionMode =1;
+hw_timer_t *Timer0_Cfg = NULL;
 
-  wakeup_reason = esp_sleep_get_wakeup_cause();
-
-  switch(wakeup_reason)
-  {
-    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
-    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
-    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
-  }
+void IRAM_ATTR Timer0_ISR()
+{
+digitalWrite(LEDPIN, !digitalRead(LEDPIN));
 }
 
-  Epd epd;
+Epd epd;
 
 
 void printOLED(String toPrint1,String toPrint2,uint8_t txtSize){
@@ -200,11 +197,28 @@ void printEP(String toPrint1,String toPrint2,String toPrint3){
   delay(10000);
 }
 
+uint8_t ConnectToWifi(void){
+  wifiManager.setConnectTimeout(60); // set the connect timeout to 20 seconds
+  wifiManager.setTimeout(60); // set the portal timeout to 20 seconds
+  unsigned long startTime = millis();
+    while ((millis() - startTime) < 60000) {
+      delay(1000); // Wait for 1 second before running the loop again
+    if (wifiManager.autoConnect("BB-Connect")) {
+        delay(1000); 
+        Serial.println("WiFi connected");
+        return 1;
+        break; // exit the loop if connected successfully
+    } else {
+        Serial.println("");
+        Serial.println("WiFi not connected but program will continue");
+        delay(1000); 
+        return 0;
+    }
+  }
+}
+
 void setup() {
 
-
-  //print_wakeup_reason();
-  
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
   
   // Initialize serial communication
@@ -217,8 +231,6 @@ void setup() {
   pinMode(FLOAT_SWITCH_PIN, INPUT_PULLUP);
   pinMode(FLOAT_SWITCH_PIN2, INPUT_PULLUP);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
-
-
 
   Serial.println("ENABLE_V3V");
   pinMode(V3V3Pin, OUTPUT);
@@ -241,11 +253,6 @@ if(USE_LIDAR){
  if(VL53) lox.startRangeContinuous();
 }
 
-//void init(uint32_t serial_diag_bitrate, bool initial, uint16_t reset_duration, bool pulldown_rst_mode, SPIClass& spi, SPISettings spi_settings)
-  //SCK, MISO, MOSI, SS);
- // Begin custom SPI with the remapped MOSI pin
-
-
 //tbd the code for the old bigger epaper we used is working so we are keeping it like this for the moment
 //this is the arduino code in the waveshare repository (so not the esp32...)
   if(USE_EPAPER){
@@ -259,22 +266,19 @@ if(USE_LIDAR){
       }
   }
   Serial.println("EPAPER_DONE");
+
+  //check if we do production mode or engineering mode
+  //engineering mode - special usb-c cable connected
+  moistureValue = analogRead(moisturePin);
+  ProductionMode = (moistureValue <100);
+  Serial.println(ProductionMode);
 }
 
 void loop() {
 
-
-  /*const int pumpPin = 21;
-  const int moisturePin = 6;
-  const int FLOAT_SWITCH_PIN = 1;
-  const int FLOAT_SWITCH_PIN2 = 2;
-  const int V3V3Pin =14;
-  const int VBAT_DIV = 7;*/
-  //checking the DCDC PUMP / 3V3
-
+if(ProductionMode){
   if(0){
       while(1) Serial.println(lox.readRange());
-
   }
 
   if(0){
@@ -288,13 +292,6 @@ void loop() {
       
       pinMode(CSPin, INPUT);
       pinMode(moisturePin, INPUT);
-      //adcAttachPin(moisturePin);
-      /*moistureValue = analogRead(CSPin);
-      moistureValue = analogRead(CSPin);
-      moistureValue = analogRead(CSPin);
-      moistureValue = analogRead(CSPin);
-      moistureValue = analogRead(CSPin);
-      moistureValue = analogRead(CSPin);*/
       moistureValue = analogRead(moisturePin);
       delay(1000);
       
@@ -305,10 +302,7 @@ void loop() {
       Serial.println(moistureValue *3.3/4095.0);
 
     }
-
   }
-
-
 
     // Clear the display buffer
   if(USE_OLED) display.clearDisplay();
@@ -453,67 +447,27 @@ uint8_t switchValue =0;
   if(1){ //probably better to only enable the wifi when no pump /other activities to avoid stress on the battery / fuse/ burnout...
     // Initialize ThingSpeak
   ThingSpeak.begin(client);
-  
-  
-  wifiManager.setConnectTimeout(60); // set the connect timeout to 20 seconds
-  wifiManager.setTimeout(60); // set the portal timeout to 20 seconds
-  unsigned long startTime = millis();
-    while ((millis() - startTime) < 60000) {
-      delay(1000); // Wait for 1 second before running the loop again
-  // Make LED LIGHT1&2 red when not connected
-      /*Serial.println("Making first 2 RED"); 
-      strip.setPixelColor(0, redColor);
-      strip.setPixelColor(1, redColor);
-      Serial.println("First 2 are RED"); 
-      delay(1000); 
-      strip.show();
-      delay(1000); 
-*/
-    if (wifiManager.autoConnect("BB-Connect")) {
-        delay(1000); 
-        Serial.println("WiFi connected");
-        // Make LED LIGHT1&2 green when connected
-       // Serial.println("Making first 2 GREEN"); 
-        /*strip.setPixelColor(0, greenColor);
-        strip.setPixelColor(1, greenColor);
-        strip.show();
-        delay(1000); */
-        break; // exit the loop if connected successfully
-    } else {
-        Serial.println("");
-        Serial.println("WiFi not connected but program will continue");
-        // Keep LED LIGHT1&2 red when not connected 
-        /*strip.setPixelColor(0, redColor);
-        strip.setPixelColor(1, redColor);
-        strip.show();
-        */
-        delay(1000); 
-    }
-  }
+  ConnectToWifi();
 }
 
 
+        // Write sensor value of moisture level to ThingSpeak
+    ThingSpeak.setField(myFieldNumber, moistureValue);
+    int status1 = ThingSpeak.writeFields(Channel1, writeAPIKey1);
+    if (status1 == 200) {
+      Serial.println("Channel update successful.");
+    } else {
+      Serial.println("Problem updating channel. HTTP error code " + String(status1));
+    }
 
-      // Write sensor value of moisture level to ThingSpeak
-  ThingSpeak.setField(myFieldNumber, moistureValue);
-  int status1 = ThingSpeak.writeFields(Channel1, writeAPIKey1);
-  if (status1 == 200) {
-    Serial.println("Channel update successful.");
-  } else {
-    Serial.println("Problem updating channel. HTTP error code " + String(status1));
-  }
-
-  // Write sensor value of water switch to ThingSpeak
-  ThingSpeak.setField(myFieldNumber, switchValue);
-  int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
-  if (status2 == 200) {
-    Serial.println("Channel update successful.");
-  } else {
-    Serial.println("Problem updating channel. HTTP error code " + String(status2));
-  }
-
-
-
+    // Write sensor value of water switch to ThingSpeak
+    ThingSpeak.setField(myFieldNumber, switchValue);
+    int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
+    if (status2 == 200) {
+      Serial.println("Channel update successful.");
+    } else {
+      Serial.println("Problem updating channel. HTTP error code " + String(status2));
+    }
 
    // Make All Lights Green
     /*for (int i = 0; i < strip.numPixels(); i++) {
@@ -531,4 +485,29 @@ uint8_t switchValue =0;
     esp_sleep_enable_timer_wakeup(SLEEP_TIME); // Set wake-up time to 10 seconds
     esp_deep_sleep_start(); // Enter deep sleep mode
     //delay (24UL * 60UL * 60UL * 1000UL);
+}
+else
+{ //engineering mode
+  //indicate engineering mode: led blinks
+      // Configure Timer0
+    Serial.println("engineering mode");
+    Timer0_Cfg = timerBegin(0, 2, true);
+    timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR, true);
+    timerAlarmWrite(Timer0_Cfg, 1000, true);
+    timerAlarmEnable(Timer0_Cfg);
+  //connect to wifi
+  if(ConnectToWifi()){
+    digitalWrite(V3V3Pin, HIGH); //emable 3.3V switch LDO
+    delay(100); //supply ramps
+    while(1){
+      moistureValue = analogRead(moisturePin);
+      if(USE_LIDAR )water_level = lox.readRange();
+      ThingSpeak.setField(1, moistureValue);
+      ThingSpeak.setField(2, (int) water_level);
+      ThingSpeak.writeFields(Channel1, writeAPIKey1);
+      delay(10000); //supply ramps
+      Serial.println("update");
+    }
+  }
+}
 }
