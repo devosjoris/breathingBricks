@@ -8,6 +8,13 @@
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 
+//for FOTA
+#include <HTTPClient.h>
+#include <ESP32httpUpdate.h>
+#define revisionURL "http://devosjoris.be/FW_REV.txt"
+
+#define FW_REV 1
+
 #define PUMP_ON_TIME 30000 //time in ms
 #define SLEEP_TIME 86400000000ULL //24*3600*1E6 don't write it as a formula since that will cast it to long, it truncates to 500654080 which corresponds to 500s (9.5minutes)
 
@@ -130,6 +137,40 @@ digitalWrite(LEDPIN, !digitalRead(LEDPIN));
 }
 
 Epd epd;
+
+uint8_t getFirmwareRevision() {
+  HTTPClient http;
+
+  Serial.print("Connecting to ");
+  Serial.println(revisionURL);
+
+  http.begin(revisionURL);
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      Serial.println("Payload received:");
+      Serial.println(payload);
+
+      int firmwareRevision = payload.toInt();
+      Serial.print("Parsed Firmware Revision: ");
+      Serial.println(firmwareRevision);
+      // Now you can use the 'firmwareRevision' integer
+      return firmwareRevision;
+    } else {
+      Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+  } else {
+    Serial.printf("[HTTP] GET... failed, connection error\n");
+    return -1;
+  }
+
+  http.end();
+  return -1;
+}
 
 
 void printOLED(String toPrint1,String toPrint2,uint8_t txtSize){
@@ -498,6 +539,24 @@ else
   //connect to wifi
   if(ConnectToWifi()){
     digitalWrite(V3V3Pin, HIGH); //emable 3.3V switch LDO
+    //check for updates FOTA
+    if(FW_REV < getFirmwareRevision()){
+        t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/FOTA.bin");
+
+        switch(ret) {
+            case HTTP_UPDATE_FAILED:
+                Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+                break;
+
+            case HTTP_UPDATE_NO_UPDATES:
+                Serial.println("HTTP_UPDATE_NO_UPDATES");
+                break;
+
+            case HTTP_UPDATE_OK:
+                Serial.println("HTTP_UPDATE_OK");
+                break;
+        }
+    }
     delay(100); //supply ramps
     while(1){
       moistureValue = analogRead(moisturePin);
