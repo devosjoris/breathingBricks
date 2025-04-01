@@ -13,7 +13,7 @@
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 1
+#define FW_REV 5
 
 #define PUMP_ON_TIME 30000 //time in ms
 #define SLEEP_TIME 86400000000ULL //24*3600*1E6 don't write it as a formula since that will cast it to long, it truncates to 500654080 which corresponds to 500s (9.5minutes)
@@ -86,7 +86,6 @@ const int FLOAT_SWITCH_PIN2 = 5;
 const int BUTTON_PIN =38;
 const int V3V3Pin =3;
 const int VBAT_DIV = 48;
-const int LED_PIN = 47;
 const int CHARGING_PIN = 14;
 const int  CSPin =10;//use for adc?
 
@@ -129,12 +128,6 @@ Adafruit_VL6180X lox = Adafruit_VL6180X();
 
 //led blinking
 uint8_t ProductionMode =1;
-hw_timer_t *Timer0_Cfg = NULL;
-
-void IRAM_ATTR Timer0_ISR()
-{
-digitalWrite(LEDPIN, !digitalRead(LEDPIN));
-}
 
 Epd epd;
 
@@ -159,13 +152,13 @@ uint8_t getFirmwareRevision() {
       Serial.print("Parsed Firmware Revision: ");
       Serial.println(firmwareRevision);
       // Now you can use the 'firmwareRevision' integer
+      http.end();
       return firmwareRevision;
     } else {
       Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
     }
   } else {
     Serial.printf("[HTTP] GET... failed, connection error\n");
-    return -1;
   }
 
   http.end();
@@ -239,8 +232,8 @@ void printEP(String toPrint1,String toPrint2,String toPrint3){
 }
 
 uint8_t ConnectToWifi(void){
-  wifiManager.setConnectTimeout(60); // set the connect timeout to 20 seconds
-  wifiManager.setTimeout(60); // set the portal timeout to 20 seconds
+  wifiManager.setConnectTimeout(20); // set the connect timeout to 20 seconds
+  wifiManager.setTimeout(20); // set the portal timeout to 20 seconds
   unsigned long startTime = millis();
     while ((millis() - startTime) < 60000) {
       delay(1000); // Wait for 1 second before running the loop again
@@ -264,7 +257,8 @@ void setup() {
   
   // Initialize serial communication
   Serial.begin(115200);
-
+  Serial.println("FW_REV");
+  Serial.println(FW_REV);
   pinMode(pumpPin, OUTPUT);
   digitalWrite(pumpPin, LOW);
 
@@ -310,9 +304,20 @@ if(USE_LIDAR){
 
   //check if we do production mode or engineering mode
   //engineering mode - special usb-c cable connected
-  moistureValue = analogRead(moisturePin);
-  ProductionMode = (moistureValue <100);
+  pinMode(moisturePin, INPUT_PULLDOWN);
+  delay(100);
+  Serial.println("VALUES   xx");
+  moistureValue = digitalRead(moisturePin);
+  Serial.println(moistureValue);
+  ProductionMode = (moistureValue ==0);
+
+  pinMode(moisturePin, INPUT_PULLUP);
+  delay(100);
+  moistureValue = digitalRead(moisturePin);
+  Serial.println(moistureValue);
+  ProductionMode = !(ProductionMode && (moistureValue = 1));
   Serial.println(ProductionMode);
+  pinMode(moisturePin, INPUT);
 }
 
 void loop() {
@@ -532,17 +537,16 @@ else
   //indicate engineering mode: led blinks
       // Configure Timer0
     Serial.println("engineering mode");
-    Timer0_Cfg = timerBegin(0, 2, true);
-    timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR, true);
-    timerAlarmWrite(Timer0_Cfg, 1000, true);
-    timerAlarmEnable(Timer0_Cfg);
+    pinMode(LEDPIN, OUTPUT);
+    digitalWrite(LEDPIN, HIGH);
   //connect to wifi
   if(ConnectToWifi()){
     digitalWrite(V3V3Pin, HIGH); //emable 3.3V switch LDO
     //check for updates FOTA
     if(FW_REV < getFirmwareRevision()){
-        t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/FOTA.bin");
-
+        Serial.println("TEST_A");
+        t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/breathingbricks.ino.bin");
+        Serial.println("TEST_B");
         switch(ret) {
             case HTTP_UPDATE_FAILED:
                 Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
@@ -560,11 +564,18 @@ else
     delay(100); //supply ramps
     while(1){
       moistureValue = analogRead(moisturePin);
+      Serial.println("A");
       if(USE_LIDAR )water_level = lox.readRange();
+      else water_level =0;
+      Serial.println("B");
       ThingSpeak.setField(1, moistureValue);
+      Serial.println("C");
       ThingSpeak.setField(2, (int) water_level);
+      Serial.println("D");
       ThingSpeak.writeFields(Channel1, writeAPIKey1);
+      Serial.println("E");
       delay(10000); //supply ramps
+      Serial.println("F");
       Serial.println("update");
     }
   }
