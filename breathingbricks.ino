@@ -13,7 +13,7 @@
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 5
+#define FW_REV 8
 
 #define PUMP_ON_TIME 30000 //time in ms
 #define SLEEP_TIME 86400000000ULL //24*3600*1E6 don't write it as a formula since that will cast it to long, it truncates to 500654080 which corresponds to 500s (9.5minutes)
@@ -108,7 +108,7 @@ String WaterLevel = "";
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 //lidar level sensor:
-#define USE_LIDAR  0
+#define USE_LIDAR  1
 
 uint32_t water_level = 0;
 #define low_THRESHOLD 200 //incm
@@ -285,6 +285,8 @@ if(USE_LIDAR){
   if (!lox.begin()) {
     Serial.println(("Failed to boot VL53L0X"));
   }
+  //lox.setGain(VL6180X_ALS_GAIN_1); // Lower gain
+  //lox.setIntegrationTime(100); // Increase integration time
  if(VL53) lox.startRangeContinuous();
 }
 
@@ -538,45 +540,60 @@ else
       // Configure Timer0
     Serial.println("engineering mode");
     pinMode(LEDPIN, OUTPUT);
+    pinMode(V3V3Pin, OUTPUT);
     digitalWrite(LEDPIN, HIGH);
+    digitalWrite(V3V3Pin, HIGH);
+
   //connect to wifi
-  if(ConnectToWifi()){
-    digitalWrite(V3V3Pin, HIGH); //emable 3.3V switch LDO
-    //check for updates FOTA
-    if(FW_REV < getFirmwareRevision()){
-        Serial.println("TEST_A");
-        t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/breathingbricks.ino.bin");
-        Serial.println("TEST_B");
-        switch(ret) {
-            case HTTP_UPDATE_FAILED:
-                Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
-                break;
-
-            case HTTP_UPDATE_NO_UPDATES:
-                Serial.println("HTTP_UPDATE_NO_UPDATES");
-                break;
-
-            case HTTP_UPDATE_OK:
-                Serial.println("HTTP_UPDATE_OK");
-                break;
+  while(1){
+    if (Serial.available()) {
+        String input = Serial.readStringUntil('\n'); // Read input until newline
+        if (input.startsWith("P")) {
+            int number = input.substring(1).toInt(); // Extract and convert number
+            Serial.print("set pump: ");
+            Serial.println(number);
+            analogWrite(pumpPin, number);
         }
-    }
-    delay(100); //supply ramps
-    while(1){
-      moistureValue = analogRead(moisturePin);
-      Serial.println("A");
-      if(USE_LIDAR )water_level = lox.readRange();
-      else water_level =0;
-      Serial.println("B");
-      ThingSpeak.setField(1, moistureValue);
-      Serial.println("C");
-      ThingSpeak.setField(2, (int) water_level);
-      Serial.println("D");
-      ThingSpeak.writeFields(Channel1, writeAPIKey1);
-      Serial.println("E");
-      delay(10000); //supply ramps
-      Serial.println("F");
-      Serial.println("update");
+        if (input.startsWith("W")) {
+          if(ConnectToWifi()){
+            //check for updates FOTA
+            if(FW_REV < getFirmwareRevision()){
+                Serial.println("TEST_A");
+                t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/breathingbricks.ino.bin");
+                Serial.println("TEST_B");
+                switch(ret) {
+                    case HTTP_UPDATE_FAILED:
+                        Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+                        break;
+
+                    case HTTP_UPDATE_NO_UPDATES:
+                        Serial.println("HTTP_UPDATE_NO_UPDATES");
+                        break;
+
+                    case HTTP_UPDATE_OK:
+                        Serial.println("HTTP_UPDATE_OK");
+                        break;
+                }
+            }
+          }
+        }
+        if (input.startsWith("L")) {
+          moistureValue = analogRead(moisturePin);
+          if(USE_LIDAR ){
+            water_level = lox.readRange();
+                    if(water_level >250){
+                    lox.setOffset(200);
+                      water_level = 200+lox.readRange();
+                    lox.setOffset(0);
+            }
+          }
+          else water_level =0;
+
+          
+          Serial.print(water_level);
+          Serial.print("  -  ");
+          Serial.println(moistureValue);
+        }
     }
   }
 }
