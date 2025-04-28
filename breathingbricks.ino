@@ -13,7 +13,7 @@
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 8
+#define FW_REV 12
 
 #define PUMP_ON_TIME 30000 //time in ms
 #define SLEEP_TIME 86400000000ULL //24*3600*1E6 don't write it as a formula since that will cast it to long, it truncates to 500654080 which corresponds to 500s (9.5minutes)
@@ -304,22 +304,43 @@ if(USE_LIDAR){
   }
   Serial.println("EPAPER_DONE");
 
-  //check if we do production mode or engineering mode
-  //engineering mode - special usb-c cable connected
-  pinMode(moisturePin, INPUT_PULLDOWN);
-  delay(100);
-  Serial.println("VALUES   xx");
-  moistureValue = digitalRead(moisturePin);
-  Serial.println(moistureValue);
-  ProductionMode = (moistureValue ==0);
+ // wait 10s for serial message
+ ProductionMode=1;
+  uint32_t starttime_debug = millis();
+   pinMode(LEDPIN, OUTPUT);
+   digitalWrite(LEDPIN, HIGH);
 
-  pinMode(moisturePin, INPUT_PULLUP);
-  delay(100);
-  moistureValue = digitalRead(moisturePin);
-  Serial.println(moistureValue);
-  ProductionMode = !(ProductionMode && (moistureValue = 1));
-  Serial.println(ProductionMode);
-  pinMode(moisturePin, INPUT);
+  while(millis()<(starttime_debug+10000)){
+    if(Serial.available()){
+      byte ch;
+      ch = Serial.read();
+      if(ch =='E'){
+        ProductionMode=0;
+        break;
+      }
+    }
+    
+
+
+  }
+  Serial.flush();
+    digitalWrite(LEDPIN, LOW);
+    delay(1000);
+
+  // pinMode(moisturePin, INPUT_PULLDOWN);
+  // delay(100);
+  // Serial.println("VALUES   xx");
+  // moistureValue = digitalRead(moisturePin);
+  // Serial.println(moistureValue);
+  // ProductionMode = (moistureValue ==0);
+
+  // pinMode(moisturePin, INPUT_PULLUP);
+  // delay(100);
+  // moistureValue = digitalRead(moisturePin);
+  // Serial.println(moistureValue);
+  // ProductionMode = !(ProductionMode && (moistureValue = 1));
+  // Serial.println(ProductionMode);
+  // pinMode(moisturePin, INPUT);
 }
 
 void loop() {
@@ -577,22 +598,46 @@ else
             }
           }
         }
-        if (input.startsWith("L")) {
-          moistureValue = analogRead(moisturePin);
+        if (input.startsWith("L")) { //LOG
+          //issue is that we need to disconnect serial for moisture readout so we have split this
+          //moistureValue = analogRead(moisturePin);
           if(USE_LIDAR ){
             water_level = lox.readRange();
-                    if(water_level >250){
-                    lox.setOffset(200);
-                      water_level = 200+lox.readRange();
-                    lox.setOffset(0);
-            }
+            //         if(water_level >250){
+            //         lox.setOffset(200);
+            //           water_level = 200+lox.readRange();
+            //         lox.setOffset(0);
+            // }
           }
           else water_level =0;
-
-          
+         
           Serial.print(water_level);
           Serial.print("  -  ");
           Serial.println(moistureValue);
+        }
+
+        if (input.startsWith("R")) { //READ for the moisture value
+          //issue is that we need to disconnect serial for moisture readout so we have split this
+          //toggle led to indicate you can connect the moisture sensor
+          digitalWrite(LEDPIN, LOW);
+          delay(10000);
+          moistureValue = analogRead(moisturePin);
+          digitalWrite(LEDPIN, HIGH);
+          // if(USE_LIDAR ){
+          //   water_level = lox.readRange();
+          //   //         if(water_level >250){
+          //   //         lox.setOffset(200);
+          //   //           water_level = 200+lox.readRange();
+          //   //         lox.setOffset(0);
+          //   // }
+          // }
+          // else water_level =0;
+          Serial.println("readout done");
+          Serial.println(moistureValue);
+        }
+        if (input.startsWith("V")) { //firmware revision:::
+          Serial.println("version");
+          Serial.println(FW_REV);
         }
     }
   }
