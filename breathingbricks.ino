@@ -13,9 +13,10 @@
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 12
+#define FW_REV 13
 
-#define PUMP_ON_TIME 30000 //time in ms
+#define PUMP_ON_TIME 10000 //controls the flow
+#define PUMP_PWM 180 //sets the pump power
 #define SLEEP_TIME 86400000000ULL //24*3600*1E6 don't write it as a formula since that will cast it to long, it truncates to 500654080 which corresponds to 500s (9.5minutes)
 
 /*#define PUMP_ON_TIME 5000 //time in ms
@@ -111,7 +112,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define USE_LIDAR  1
 
 uint32_t water_level = 0;
-#define low_THRESHOLD 200 //incm
+#define low_THRESHOLD 180 //incm
 #define medium_THRESHOLD 100 //incm
 
 /*#include "Adafruit_VL53L0X.h"
@@ -319,9 +320,6 @@ if(USE_LIDAR){
         break;
       }
     }
-    
-
-
   }
   Serial.flush();
     digitalWrite(LEDPIN, LOW);
@@ -459,7 +457,7 @@ uint8_t switchValue =0;
   
   // If moisture level is above a threshold, turn on the pump
   printOLED("Checking", "Moisture",2);
-  if (moistureValue > defaultMoisture) {
+  if (moistureValue > defaultMoisture) { //too dry
     //Make LEDLIGHT5 & 6 RED
     /*strip.setPixelColor(4, redColor); // Set light 5 to red
     strip.setPixelColor(5, redColor); // Set light 6 to red
@@ -472,8 +470,8 @@ uint8_t switchValue =0;
     else{
       printOLED("Plant Dry", "Pumping",2);
 
-      digitalWrite(pumpPin, HIGH);
       Serial.println("Pump turned on");
+      analogWrite(pumpPin, PUMP_PWM);
 
       //Make LEDLIGHT7 & 8 RED
       /*strip.setPixelColor(6, redColor); // Set light 7 to red
@@ -482,6 +480,7 @@ uint8_t switchValue =0;
       delay(PUMP_ON_TIME); // Run Pump for 30 seconds
 
       //Turn Pump Off
+      analogWrite(pumpPin, 0);
       digitalWrite(pumpPin, LOW);
       Serial.println("Pump turned off");
 
