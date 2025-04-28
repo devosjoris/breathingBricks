@@ -13,7 +13,7 @@
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 13
+#define FW_REV 14
 
 #define PUMP_ON_TIME 10000 //controls the flow
 #define PUMP_PWM 180 //sets the pump power
