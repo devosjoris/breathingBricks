@@ -13,7 +13,7 @@
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 14
+#define FW_REV 15
 
 #define PUMP_ON_TIME 10000 //controls the flow
 #define PUMP_PWM 180 //sets the pump power
@@ -33,6 +33,7 @@
 #include "imagedata.h"
 #include "epdpaint.h"
 
+
 #define COLORED     0
 #define UNCOLORED   1
 
@@ -45,6 +46,7 @@
 
 #define CLK_PIN 12 //also update in epdif.h
 #define MOSI_PIN 11 //also update in epdif.h
+
 #define LEDPIN 47
 
 
@@ -64,16 +66,16 @@ WiFiManager wifiManager;
 const char* server = "api.thingspeak.com";
 //#define PRODUCTION //debug code we will log sensor values to website:::
 
-  const char* writeAPIKey1 = "UPZ23G51STVNGGJ6";
-  const char* writeAPIKey2 = "HU4OTXS60L17SS6X";
+const char* writeAPIKey1 = "UPZ23G51STVNGGJ6";
+const char* writeAPIKey2 = "HU4OTXS60L17SS6X";
 
-  unsigned long Channel1 = 2413633; // Change to your channel number
-  unsigned long Channel2 = 2413649; // Change to your channel number
-  int myFieldNumber = 1; // Change to the field number you wish to update
+unsigned long Channel1 = 2413633; // Change to your channel number
+unsigned long Channel2 = 2413649; // Change to your channel number
+int myFieldNumber = 1; // Change to the field number you wish to update
 
 //the engineering mode thingspeak, for checking sensor performance
-  const char* writeAPIKey3 = "04QB4ERJUWODH4BC";
-  unsigned long Channel3 =2864883;
+const char* writeAPIKey3 = "04QB4ERJUWODH4BC";
+unsigned long Channel3 =2864883;
 
 //Connect to WebClient
 WiFiClient client;
@@ -94,7 +96,7 @@ RTC_DATA_ATTR int bootCount = 0; //sleep wakeup counter
 
 // Moisture sensor variables
 int moistureValue = 0;
-int VBAT_DIV_Value = 0;
+int VBAT_VOLT_DIV2 = 0;
 float defaultMoisture = 2500.0;
 
 bool OLED_STATUS=false;
@@ -258,6 +260,7 @@ void setup() {
   
   // Initialize serial communication
   Serial.begin(115200);
+  delay(5000);
   Serial.println("FW_REV");
   Serial.println(FW_REV);
   pinMode(pumpPin, OUTPUT);
@@ -305,6 +308,10 @@ if(USE_LIDAR){
   }
   Serial.println("EPAPER_DONE");
 
+  //epd.DisplayFrame(IMAGE_DATA);
+  printEP("Tuning into", "nature ...", "almost there!"); 
+
+
  // wait 10s for serial message
  ProductionMode=1;
   uint32_t starttime_debug = millis();
@@ -321,55 +328,25 @@ if(USE_LIDAR){
       }
     }
   }
+
+  //battery monitor
+  // the battery monitor only works when enabling the pump
+  // enable it short
+  digitalWrite(pumpPin, 1);
+  delay(100);
+
+
+
+  VBAT_VOLT_DIV2 = analogRead(VBAT_DIV);
+
   Serial.flush();
     digitalWrite(LEDPIN, LOW);
     delay(1000);
-
-  // pinMode(moisturePin, INPUT_PULLDOWN);
-  // delay(100);
-  // Serial.println("VALUES   xx");
-  // moistureValue = digitalRead(moisturePin);
-  // Serial.println(moistureValue);
-  // ProductionMode = (moistureValue ==0);
-
-  // pinMode(moisturePin, INPUT_PULLUP);
-  // delay(100);
-  // moistureValue = digitalRead(moisturePin);
-  // Serial.println(moistureValue);
-  // ProductionMode = !(ProductionMode && (moistureValue = 1));
-  // Serial.println(ProductionMode);
-  // pinMode(moisturePin, INPUT);
 }
 
 void loop() {
 
 if(ProductionMode){
-  if(0){
-      while(1) Serial.println(lox.readRange());
-  }
-
-  if(0){
-    while(1){
-
-      //for measuring VBAT_DIV need to enable the DCDC:
-      Serial.println("ADC_CHECK");
-      digitalWrite(pumpPin, HIGH);
-      Serial.println("RD");
-      delay(1000);
-      
-      pinMode(CSPin, INPUT);
-      pinMode(moisturePin, INPUT);
-      moistureValue = analogRead(moisturePin);
-      delay(1000);
-      
-
-      Serial.println("VBAT");
-      Serial.println(VBAT_DIV_Value *3.3/4095.0);
-      Serial.println("MOISTURE");
-      Serial.println(moistureValue *3.3/4095.0);
-
-    }
-  }
 
     // Clear the display buffer
   if(USE_OLED) display.clearDisplay();
@@ -382,7 +359,8 @@ if(ProductionMode){
   //high means level too low --> 
   printOLED("Checking", "Water",2);
   Serial.println("START_READOUT");
-uint8_t switchValue =0;
+  uint8_t switchValue =0;
+
   if(USE_LIDAR){
       if (1) {
         Serial.print("Distance in mm: ");
@@ -396,30 +374,15 @@ uint8_t switchValue =0;
       }
   }
 
-  if (USE_LIDAR ==0){ switchValue = digitalRead(FLOAT_SWITCH_PIN)  + 2*digitalRead(FLOAT_SWITCH_PIN2);}
+  if (USE_LIDAR == 0) { switchValue = digitalRead(FLOAT_SWITCH_PIN)  + 2*digitalRead(FLOAT_SWITCH_PIN2);}
   if (switchValue == 3) {//both switches are low
     Serial.println("Water Level NOT OK");
     printEP("Refill Water", "Can't water", "plants!"); 
     pinMode(LEDPIN, OUTPUT);
     digitalWrite(LEDPIN, HIGH); //emable 3.3V switch LDO
 
+    shouldEndProgram=true;
 
-    //Display Refill Water
-    /*display.clearDisplay();
-    display.setTextSize(2);
-    display.setTextColor(WHITE);
-    display.setCursor(0, 0);
-    display.setRotation(2);  // Rotate the display 180 degrees
-    display.print("Refill    Water");
-    display.display();
-
-    paint.Clear(COLORED);
-    paint.DrawStringAt(20, 5, "Refill    Water", &Font16, UNCOLORED);
-    epd.Display_Partial_Not_refresh(paint.GetImage(), 0, 96, 0+paint.GetWidth(), 96+paint.GetHeight());
-    */
-
-    //return;
-    
   } else {
     Serial.println("Water Level Good");
     if (switchValue == 0){
@@ -435,34 +398,10 @@ uint8_t switchValue =0;
   if (shouldEndProgram) {
     return; // End the program if the water level is not OK
   }
-  
-  // Display moisture level on OLED display
-  /*
-  display.clearDisplay();
-  display.setTextSize(2);
-  display.setTextColor(WHITE);
-  display.setCursor(0, 0);
-  display.setRotation(2);  // Rotate the display 180 degrees
-  display.print("Moisture ");
-  display.setTextSize(3);
-  display.setCursor(0, 20);
-  display.setRotation(2);  // Rotate the display 180 degrees
-  display.print(moistureValue);
-  display.setTextSize(2);
-  display.setCursor(75, 45);
-  display.setRotation(2);  // Rotate the display 180 degrees
-  display.print("   ");
-  display.display();
-  delay(2000); // Wait 2 seconds*/
-  
+
   // If moisture level is above a threshold, turn on the pump
   printOLED("Checking", "Moisture",2);
   if (moistureValue > defaultMoisture) { //too dry
-    //Make LEDLIGHT5 & 6 RED
-    /*strip.setPixelColor(4, redColor); // Set light 5 to red
-    strip.setPixelColor(5, redColor); // Set light 6 to red
-    strip.show();*/
-    //Turn PUMP ON
     if(switchValue ==3){ //water level is NOK
       printOLED("Can't water", "plants",1);
       printEP("Refill", "Immediately", "and press Reset.");
@@ -472,11 +411,6 @@ uint8_t switchValue =0;
 
       Serial.println("Pump turned on");
       analogWrite(pumpPin, PUMP_PWM);
-
-      //Make LEDLIGHT7 & 8 RED
-      /*strip.setPixelColor(6, redColor); // Set light 7 to red
-      strip.setPixelColor(7, redColor); // Set light 8 to red
-      strip.show();*/
       delay(PUMP_ON_TIME); // Run Pump for 30 seconds
 
       //Turn Pump Off
@@ -484,13 +418,6 @@ uint8_t switchValue =0;
       digitalWrite(pumpPin, LOW);
       Serial.println("Pump turned off");
 
-      //Make Both Moisture (LIGHT5&6) and Pump (LIGHT7&8) Green
-      /*strip.setPixelColor(4, greenColor); // Set light 5 to green
-      strip.setPixelColor(5, greenColor); // Set light 6 to green
-      strip.show();
-      strip.setPixelColor(6, greenColor); // Set light 7 to green
-      strip.setPixelColor(7, greenColor); // Set light 8 to green
-      strip.show();*/
       printOLED("Plant OK","",2);
       printEP("Plant OK","Water Level", WaterLevel);
     }
@@ -514,45 +441,45 @@ uint8_t switchValue =0;
 
   if(1){ //probably better to only enable the wifi when no pump /other activities to avoid stress on the battery / fuse/ burnout...
     // Initialize ThingSpeak
-  ThingSpeak.begin(client);
-  ConnectToWifi();
-}
+    ThingSpeak.begin(client);
+    ConnectToWifi();
+  }
 
 
-        // Write sensor value of moisture level to ThingSpeak
-    ThingSpeak.setField(myFieldNumber, moistureValue);
-    int status1 = ThingSpeak.writeFields(Channel1, writeAPIKey1);
-    if (status1 == 200) {
-      Serial.println("Channel update successful.");
-    } else {
-      Serial.println("Problem updating channel. HTTP error code " + String(status1));
-    }
+      // Write sensor value of moisture level to ThingSpeak
+  ThingSpeak.setField(myFieldNumber, moistureValue);
+  int status1 = ThingSpeak.writeFields(Channel1, writeAPIKey1);
+  if (status1 == 200) {
+    Serial.println("Channel update successful.");
+  } else {
+    Serial.println("Problem updating channel. HTTP error code " + String(status1));
+  }
 
-    // Write sensor value of water switch to ThingSpeak
-    ThingSpeak.setField(myFieldNumber, switchValue);
-    int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
-    if (status2 == 200) {
-      Serial.println("Channel update successful.");
-    } else {
-      Serial.println("Problem updating channel. HTTP error code " + String(status2));
-    }
+  // Write sensor value of water switch to ThingSpeak
+  ThingSpeak.setField(myFieldNumber, switchValue);
+  int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
+  if (status2 == 200) {
+    Serial.println("Channel update successful.");
+  } else {
+    Serial.println("Problem updating channel. HTTP error code " + String(status2));
+  }
 
-   // Make All Lights Green
-    /*for (int i = 0; i < strip.numPixels(); i++) {
-      strip.setPixelColor(i, greenColor);
-    }
-    strip.show();*/
-    Serial.println("SLEEPING");
-    Serial.println(SLEEP_TIME);
-    //esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, LOW); //this gives cpu reset so not ok..
+  // Make All Lights Green
+  /*for (int i = 0; i < strip.numPixels(); i++) {
+    strip.setPixelColor(i, greenColor);
+  }
+  strip.show();*/
+  Serial.println("SLEEPING");
+  Serial.println(SLEEP_TIME);
+  //esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, LOW); //this gives cpu reset so not ok..
 
 
-    //Run again in 24 hours 
-    //esp_sleep_enable_timer_wakeup(24*3600* 1000000); // Set wake-up time to 10 seconds
-    //esp_sleep_enable_ext0_wakeup(GPIO_NUM_4,0);
-    esp_sleep_enable_timer_wakeup(SLEEP_TIME); // Set wake-up time to 10 seconds
-    esp_deep_sleep_start(); // Enter deep sleep mode
-    //delay (24UL * 60UL * 60UL * 1000UL);
+  //Run again in 24 hours 
+  //esp_sleep_enable_timer_wakeup(24*3600* 1000000); // Set wake-up time to 10 seconds
+  //esp_sleep_enable_ext0_wakeup(GPIO_NUM_4,0);
+  esp_sleep_enable_timer_wakeup(SLEEP_TIME); // Set wake-up time to 10 seconds
+  esp_deep_sleep_start(); // Enter deep sleep mode
+  //delay (24UL * 60UL * 60UL * 1000UL);
 }
 else
 { //engineering mode
@@ -579,7 +506,7 @@ else
             //check for updates FOTA
             if(FW_REV < getFirmwareRevision()){
                 Serial.println("TEST_A");
-                t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/breathingbricks.ino.bin");
+                t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/breathingbricks.ino.bin"); 
                 Serial.println("TEST_B");
                 switch(ret) {
                     case HTTP_UPDATE_FAILED:
@@ -602,11 +529,6 @@ else
           //moistureValue = analogRead(moisturePin);
           if(USE_LIDAR ){
             water_level = lox.readRange();
-            //         if(water_level >250){
-            //         lox.setOffset(200);
-            //           water_level = 200+lox.readRange();
-            //         lox.setOffset(0);
-            // }
           }
           else water_level =0;
          
@@ -622,15 +544,6 @@ else
           delay(10000);
           moistureValue = analogRead(moisturePin);
           digitalWrite(LEDPIN, HIGH);
-          // if(USE_LIDAR ){
-          //   water_level = lox.readRange();
-          //   //         if(water_level >250){
-          //   //         lox.setOffset(200);
-          //   //           water_level = 200+lox.readRange();
-          //   //         lox.setOffset(0);
-          //   // }
-          // }
-          // else water_level =0;
           Serial.println("readout done");
           Serial.println(moistureValue);
         }
