@@ -308,7 +308,8 @@ if(USE_LIDAR){
   }
   Serial.println("EPAPER_DONE");
 
-  //epd.DisplayFrame(IMAGE_DATA);
+  epd.Display(IMAGE_DATA);
+  delay(5000);
   printEP("Tuning into", "nature ...", "almost there!"); 
 
 
