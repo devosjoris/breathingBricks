@@ -8,6 +8,10 @@
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 
+
+//for sleep pin retention
+#include "driver/rtc_io.h"
+
 //for FOTA
 #include <HTTPClient.h>
 #include <ESP32httpUpdate.h>
@@ -48,6 +52,11 @@
 #define MOSI_PIN 11 //also update in epdif.h
 
 #define LEDPIN 47
+
+//for readability and compatibility between lidar and level switches
+#define WATER_IS_HIGH     0  //both switches toggled
+#define WATER_IS_MEDIUM   1  //only one switch toggled
+#define WATER_IS_LOW      3  //no swtich toggled
 
 
 //if you have   another microcontroller or another e-ink display module you have to change the following   line
@@ -113,7 +122,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 //lidar level sensor:
 #define USE_LIDAR  1
 
-uint32_t water_level = 0;
+uint32_t water_distance = 0;
 #define low_THRESHOLD 180 //incm
 #define medium_THRESHOLD 100 //incm
 
@@ -193,7 +202,7 @@ void printOLED(String toPrint1,String toPrint2,uint8_t txtSize){
 }
 
 
-void printEP(String toPrint1,String toPrint2,String toPrint3){
+void printEP(String headerString, String toPrint1,String toPrint2,String toPrint3){
 
   if(USE_EPAPER ==0) return;
 
@@ -213,7 +222,7 @@ void printEP(String toPrint1,String toPrint2,String toPrint3){
 
 
       paint.Clear(COLORED);
-      paint.DrawStringAt(0, 5, "Breathing Block", &Font16, UNCOLORED);
+      paint.DrawStringAt(0, 5, headerString.c_str(), &Font16, UNCOLORED);
       epd.Display_Partial_Not_refresh(paint.GetImage(), 0, 32, 0+paint.GetWidth(), 32+paint.GetHeight());
       paint.Clear(UNCOLORED);
       paint.DrawStringAt(10, 5,toPrint1.c_str(), &Font16, COLORED);
@@ -231,27 +240,52 @@ void printEP(String toPrint1,String toPrint2,String toPrint3){
     }
   }
   Serial.println("EPAPER_UPDATE_DONE");
-  delay(10000);
 }
 
 uint8_t ConnectToWifi(void){
-  wifiManager.setConnectTimeout(20); // set the connect timeout to 20 seconds
-  wifiManager.setTimeout(20); // set the portal timeout to 20 seconds
-  unsigned long startTime = millis();
-    while ((millis() - startTime) < 60000) {
-      delay(1000); // Wait for 1 second before running the loop again
-    if (wifiManager.autoConnect("BB-Connect")) {
-        delay(1000); 
-        Serial.println("WiFi connected");
-        return 1;
-        break; // exit the loop if connected successfully
-    } else {
-        Serial.println("");
-        Serial.println("WiFi not connected but program will continue");
-        delay(1000); 
-        return 0;
-    }
+  //give it 10seconds to connect
+  //then 2 minutes of acces point time
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin();
+
+  Serial.println("Trying to connect to saved Wi-Fi...");
+
+  unsigned long startAttemptTime = millis();
+  const unsigned long timeout = 10000; // 10 seconds
+
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < timeout) {
+    Serial.print(".");
+    delay(500);
   }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nConnected to Wi-Fi!");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+      printEP("Breathing Block","WiFi", "connected","");
+      delay(5000);
+      return 1;
+    }
+
+    //disconnect before switching to wifimanager
+    WiFi.disconnect();
+    WiFi.mode(WIFI_OFF);
+
+    wifiManager.setConnectTimeout(120); // set the connect timeout to 120 seconds
+    wifiManager.setTimeout(120); // set the portal timeout to 120 seconds
+    
+    unsigned long startTime = millis();
+      printEP(" Setup WiFi", "connect to", "'BB Connect'", "on phone");
+      if (wifiManager.autoConnect("BB-Connect")) {
+          delay(1000); 
+          Serial.println("WiFi connected");
+          printEP("Breathing Block","WiFi", "connected","");
+          delay(5000);
+      } else {
+          Serial.println("AP TIMEOUT") ;
+      }
+    return 0;
 }
 
 void setup() {
@@ -260,11 +294,13 @@ void setup() {
   
   // Initialize serial communication
   Serial.begin(115200);
-  delay(5000);
+  delay(1000);
   Serial.println("FW_REV");
   Serial.println(FW_REV);
   pinMode(pumpPin, OUTPUT);
   digitalWrite(pumpPin, LOW);
+
+  pinMode(VBAT_DIV, INPUT);
 
   // Initialize float switch pin
   pinMode(FLOAT_SWITCH_PIN, INPUT_PULLUP);
@@ -278,21 +314,29 @@ void setup() {
 
   Serial.println("ENABLE_v3vDONE");
 
-if(USE_OLED){
-    // Initialize OLED display
-  Serial.println("ENABLE_OLED");
-  OLED_STATUS=display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-  printOLED("Hey There", "",2);
-}
+  //initialize the charger:
+  // Configure GPIO14 as output and set it HIGH, this pin remains high in deep sleep:
+  //alternative is to just set the jumper JP2 (probably better for power consumption)
+  pinMode(CHARGING_PIN, INPUT_PULLUP);
+  rtc_gpio_pullup_en((gpio_num_t)CHARGING_PIN);
+  //rtc_gpio_hold_en(CHARGING_PIN);
+  gpio_deep_sleep_hold_en(); // Enable global deep sleep hold
 
-if(USE_LIDAR){
-  if (!lox.begin()) {
-    Serial.println(("Failed to boot VL53L0X"));
+  if(USE_OLED){
+      // Initialize OLED display
+    Serial.println("ENABLE_OLED");
+    OLED_STATUS=display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    printOLED("Hey There", "",2);
   }
-  //lox.setGain(VL6180X_ALS_GAIN_1); // Lower gain
-  //lox.setIntegrationTime(100); // Increase integration time
- if(VL53) lox.startRangeContinuous();
-}
+
+  if(USE_LIDAR){
+    if (!lox.begin()) {
+      Serial.println(("Failed to boot VL53L0X"));
+    }
+    //lox.setGain(VL6180X_ALS_GAIN_1); // Lower gain
+    //lox.setIntegrationTime(100); // Increase integration time
+    if(VL53) lox.startRangeContinuous();
+  }
 
 //tbd the code for the old bigger epaper we used is working so we are keeping it like this for the moment
 //this is the arduino code in the waveshare repository (so not the esp32...)
@@ -308,16 +352,16 @@ if(USE_LIDAR){
   }
   Serial.println("EPAPER_DONE");
 
-  epd.Display(IMAGE_DATA);
-  delay(5000);
-  printEP("Tuning into", "nature ...", "almost there!"); 
+  //epd.Display(IMAGE_DATA);
+  //delay(5000);
+  printEP("Breathing Block","Tuning into", "nature ...", "almost there!"); 
 
 
- // wait 10s for serial message
- ProductionMode=1;
+  // wait 10s for serial message
+  ProductionMode=1;
   uint32_t starttime_debug = millis();
-   pinMode(LEDPIN, OUTPUT);
-   digitalWrite(LEDPIN, HIGH);
+  pinMode(LEDPIN, OUTPUT);
+  digitalWrite(LEDPIN, HIGH);
 
   while(millis()<(starttime_debug+10000)){
     if(Serial.available()){
@@ -330,229 +374,230 @@ if(USE_LIDAR){
     }
   }
 
-  //battery monitor
-  // the battery monitor only works when enabling the pump
-  // enable it short
-  digitalWrite(pumpPin, 1);
-  delay(100);
+  if(ProductionMode){
+    //battery monitor
+    // the battery monitor only works when enabling the pump
+    // enable it short
 
+    //BUG; this is not a valid esp32 adc channel
+    digitalWrite(pumpPin, HIGH);
+    delay(100);
 
+    VBAT_VOLT_DIV2 = analogRead(VBAT_DIV);
+    Serial.println("VBAT");
+    Serial.println(VBAT_VOLT_DIV2);
 
-  VBAT_VOLT_DIV2 = analogRead(VBAT_DIV);
-
-  Serial.flush();
+    Serial.flush();
     digitalWrite(LEDPIN, LOW);
     delay(1000);
+
+    //check the Wifi:
+    if(1){ //probably better to only enable the wifi when no pump /other activities to avoid stress on the battery / fuse/ burnout...
+      // Initialize ThingSpeak
+      ThingSpeak.begin(client);
+      ConnectToWifi();
+    }
+  }
 }
 
 void loop() {
+  if(ProductionMode){
+      // Clear the display buffer
+    if(USE_OLED) display.clearDisplay();
+    Serial.println("CHECKING WATER");
+    // Read moisture sensor
+    moistureValue = analogRead(moisturePin);
+    Serial.println("MOISTURE:");
+    Serial.println(moistureValue);
 
-if(ProductionMode){
+    //high means level too low --> 
+    printOLED("Checking", "Water",2);
+    Serial.println("START_READOUT");
+    uint8_t switchValue =0;
 
-    // Clear the display buffer
-  if(USE_OLED) display.clearDisplay();
-  Serial.println("CHECKING WATER");
-  // Read moisture sensor
-  moistureValue = analogRead(moisturePin);
-  Serial.println("MOISTURE:");
-  Serial.println(moistureValue);
-
-  //high means level too low --> 
-  printOLED("Checking", "Water",2);
-  Serial.println("START_READOUT");
-  uint8_t switchValue =0;
-
-  if(USE_LIDAR){
-      if (1) {
-        Serial.print("Distance in mm: ");
-        water_level = lox.readRange();
-        Serial.println(water_level);
-        if(water_level > low_THRESHOLD)
-          switchValue = 3;
-        else if(water_level > medium_THRESHOLD)
-          switchValue =0;
-        else switchValue =1;
-      }
-  }
-
-  if (USE_LIDAR == 0) { switchValue = digitalRead(FLOAT_SWITCH_PIN)  + 2*digitalRead(FLOAT_SWITCH_PIN2);}
-  if (switchValue == 3) {//both switches are low
-    Serial.println("Water Level NOT OK");
-    printEP("Refill Water", "Can't water", "plants!"); 
-    pinMode(LEDPIN, OUTPUT);
-    digitalWrite(LEDPIN, HIGH); //emable 3.3V switch LDO
-
-    shouldEndProgram=true;
-
-  } else {
-    Serial.println("Water Level Good");
-    if (switchValue == 0){
-      WaterLevel= "High.";
-    }
-    else{
-      WaterLevel= "Medium.";
-    }
-    printEP("","Water Level", WaterLevel);
-  }
- 
-
-  if (shouldEndProgram) {
-    return; // End the program if the water level is not OK
-  }
-
-  // If moisture level is above a threshold, turn on the pump
-  printOLED("Checking", "Moisture",2);
-  if (moistureValue > defaultMoisture) { //too dry
-    if(switchValue ==3){ //water level is NOK
-      printOLED("Can't water", "plants",1);
-      printEP("Refill", "Immediately", "and press Reset.");
-    }
-    else{
-      printOLED("Plant Dry", "Pumping",2);
-
-      Serial.println("Pump turned on");
-      analogWrite(pumpPin, PUMP_PWM);
-      delay(PUMP_ON_TIME); // Run Pump for 30 seconds
-
-      //Turn Pump Off
-      analogWrite(pumpPin, 0);
-      digitalWrite(pumpPin, LOW);
-      Serial.println("Pump turned off");
-
-      printOLED("Plant OK","",2);
-      printEP("Plant OK","Water Level", WaterLevel);
-    }
-  }
-  else {
-    Serial.println("No watering needed");
-    if(switchValue !=3){
-      printEP("Plant OK","Water Level", WaterLevel);
-    }
-
-  }
-
-
-  //here we update the wifi:
-
-  //reduce the current consumption by disabling everythign not wifi:
-  //screen /moisture sensor and pump...
-  //digitalWrite(V3V3Pin,LOW); probably ok to keep screen and moisture sensor on...
-  digitalWrite(pumpPin,LOW);
-
-
-  if(1){ //probably better to only enable the wifi when no pump /other activities to avoid stress on the battery / fuse/ burnout...
-    // Initialize ThingSpeak
-    ThingSpeak.begin(client);
-    ConnectToWifi();
-  }
-
-
-      // Write sensor value of moisture level to ThingSpeak
-  ThingSpeak.setField(myFieldNumber, moistureValue);
-  int status1 = ThingSpeak.writeFields(Channel1, writeAPIKey1);
-  if (status1 == 200) {
-    Serial.println("Channel update successful.");
-  } else {
-    Serial.println("Problem updating channel. HTTP error code " + String(status1));
-  }
-
-  // Write sensor value of water switch to ThingSpeak
-  ThingSpeak.setField(myFieldNumber, switchValue);
-  int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
-  if (status2 == 200) {
-    Serial.println("Channel update successful.");
-  } else {
-    Serial.println("Problem updating channel. HTTP error code " + String(status2));
-  }
-
-  // Make All Lights Green
-  /*for (int i = 0; i < strip.numPixels(); i++) {
-    strip.setPixelColor(i, greenColor);
-  }
-  strip.show();*/
-  Serial.println("SLEEPING");
-  Serial.println(SLEEP_TIME);
-  //esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, LOW); //this gives cpu reset so not ok..
-
-
-  //Run again in 24 hours 
-  //esp_sleep_enable_timer_wakeup(24*3600* 1000000); // Set wake-up time to 10 seconds
-  //esp_sleep_enable_ext0_wakeup(GPIO_NUM_4,0);
-  esp_sleep_enable_timer_wakeup(SLEEP_TIME); // Set wake-up time to 10 seconds
-  esp_deep_sleep_start(); // Enter deep sleep mode
-  //delay (24UL * 60UL * 60UL * 1000UL);
-}
-else
-{ //engineering mode
-  //indicate engineering mode: led blinks
-      // Configure Timer0
-    Serial.println("engineering mode");
-    pinMode(LEDPIN, OUTPUT);
-    pinMode(V3V3Pin, OUTPUT);
-    digitalWrite(LEDPIN, HIGH);
-    digitalWrite(V3V3Pin, HIGH);
-
-  //connect to wifi
-  while(1){
-    if (Serial.available()) {
-        String input = Serial.readStringUntil('\n'); // Read input until newline
-        if (input.startsWith("P")) {
-            int number = input.substring(1).toInt(); // Extract and convert number
-            Serial.print("set pump: ");
-            Serial.println(number);
-            analogWrite(pumpPin, number);
+    if(USE_LIDAR){
+        if (1) {
+          Serial.print("Distance in mm: ");
+          water_distance = lox.readRange();
+          Serial.println(water_distance);
+          if(water_distance > low_THRESHOLD)
+            switchValue = WATER_IS_LOW;
+          else if(water_distance > medium_THRESHOLD)
+            switchValue =WATER_IS_MEDIUM;
+          else switchValue =WATER_IS_HIGH;
         }
-        if (input.startsWith("W")) {
-          if(ConnectToWifi()){
-            //check for updates FOTA
-            if(FW_REV < getFirmwareRevision()){
-                Serial.println("TEST_A");
-                t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/breathingbricks.ino.bin"); 
-                Serial.println("TEST_B");
-                switch(ret) {
-                    case HTTP_UPDATE_FAILED:
-                        Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
-                        break;
+    }
 
-                    case HTTP_UPDATE_NO_UPDATES:
-                        Serial.println("HTTP_UPDATE_NO_UPDATES");
-                        break;
 
-                    case HTTP_UPDATE_OK:
-                        Serial.println("HTTP_UPDATE_OK");
-                        break;
-                }
+    if (USE_LIDAR == 0) { switchValue = digitalRead(FLOAT_SWITCH_PIN)  + 2*digitalRead(FLOAT_SWITCH_PIN2);}
+    if (switchValue == WATER_IS_LOW) {//both switches are low
+      Serial.println("Water Level NOT OK");
+      printEP("Breathing Block","Refill Water", "Can't water", "plants!"); 
+      pinMode(LEDPIN, OUTPUT);
+      digitalWrite(LEDPIN, HIGH); //emable 3.3V switch LDO
+
+      shouldEndProgram=true;
+
+    } else {
+      Serial.println("Water Level Good");
+      if (switchValue == WATER_IS_HIGH){
+        WaterLevel= "High.";
+      }
+      else{
+        WaterLevel= "Medium.";
+      }
+      printEP("Breathing Block","","Water Level", WaterLevel);
+    }
+
+    if (shouldEndProgram) {
+      return; // End the program if the water level is not OK
+    }
+
+    // If moisture level is above a threshold, turn on the pump
+    printOLED("Checking", "Moisture",2);
+    if (moistureValue > defaultMoisture) { //too dry
+      if(switchValue ==WATER_IS_LOW){ //water level is NOK, should never happen duetoo the should_end_program triggered above
+        printOLED("Can't water", "plants",1);
+        printEP("Breathing Block","Refill", "Immediately", "and press Reset.");
+      }
+      else{
+        printOLED("Plant Dry", "Pumping",2);
+
+        Serial.println("Pump turned on");
+        analogWrite(pumpPin, PUMP_PWM);
+        delay(PUMP_ON_TIME); // Run Pump for 30 seconds
+
+        //Turn Pump Off
+        analogWrite(pumpPin, 0);
+        digitalWrite(pumpPin, LOW);
+        Serial.println("Pump turned off");
+
+        printOLED("Plant OK","",2);
+        printEP("Breathing Block","Plant OK","Water Level", WaterLevel);
+      }
+    }
+    else {
+      Serial.println("No watering needed");
+      if(switchValue !=3){
+        printEP("Breathing Block","Plant OK","Water Level", WaterLevel);
+      }
+
+    }
+
+
+    //here we update the wifi:
+
+    //reduce the current consumption by disabling everythign not wifi:
+    //screen /moisture sensor and pump...
+    //digitalWrite(V3V3Pin,LOW); probably ok to keep screen and moisture sensor on...
+    digitalWrite(pumpPin,LOW);
+
+        // Write sensor value of moisture level to ThingSpeak
+    ThingSpeak.setField(myFieldNumber, moistureValue);
+    int status1 = ThingSpeak.writeFields(Channel1, writeAPIKey1);
+    if (status1 == 200) {
+      Serial.println("Channel update successful.");
+    } else {
+      Serial.println("Problem updating channel. HTTP error code " + String(status1));
+    }
+
+    // Write sensor value of water switch to ThingSpeak
+    ThingSpeak.setField(myFieldNumber, switchValue);
+    int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
+    if (status2 == 200) {
+      Serial.println("Channel update successful.");
+    } else {
+      Serial.println("Problem updating channel. HTTP error code " + String(status2));
+    }
+
+    // Make All Lights Green
+    /*for (int i = 0; i < strip.numPixels(); i++) {
+      strip.setPixelColor(i, greenColor);
+    }
+    strip.show();*/
+    Serial.println("SLEEPING");
+    Serial.println(SLEEP_TIME);
+    //esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, LOW); //this gives cpu reset so not ok..
+
+
+    //Run again in 24 hours 
+    //esp_sleep_enable_timer_wakeup(24*3600* 1000000); // Set wake-up time to 10 seconds
+    //esp_sleep_enable_ext0_wakeup(GPIO_NUM_4,0);
+    esp_sleep_enable_timer_wakeup(SLEEP_TIME); // Set wake-up time to 10 seconds
+    esp_deep_sleep_start(); // Enter deep sleep mode
+    //delay (24UL * 60UL * 60UL * 1000UL);
+  }
+  else
+  { //engineering mode
+    //indicate engineering mode: led blinks
+        // Configure Timer0
+      Serial.println("engineering mode");
+      pinMode(LEDPIN, OUTPUT);
+      pinMode(V3V3Pin, OUTPUT);
+      digitalWrite(LEDPIN, HIGH);
+      digitalWrite(V3V3Pin, HIGH);
+
+    //connect to wifi
+    while(1){
+      if (Serial.available()) {
+          String input = Serial.readStringUntil('\n'); // Read input until newline
+          if (input.startsWith("P")) {
+              int number = input.substring(1).toInt(); // Extract and convert number
+              Serial.print("set pump: ");
+              Serial.println(number);
+              analogWrite(pumpPin, number);
+          }
+          if (input.startsWith("W")) {
+            if(ConnectToWifi()){
+              //check for updates FOTA
+              if(FW_REV < getFirmwareRevision()){
+                  Serial.println("TEST_A");
+                  t_httpUpdate_return ret = ESPhttpUpdate.update("http://devosjoris.be/breathingbricks.ino.bin"); 
+                  Serial.println("TEST_B");
+                  switch(ret) {
+                      case HTTP_UPDATE_FAILED:
+                          Serial.printf("HTTP_UPDATE_FAILD Error (%d): %s", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+                          break;
+
+                      case HTTP_UPDATE_NO_UPDATES:
+                          Serial.println("HTTP_UPDATE_NO_UPDATES");
+                          break;
+
+                      case HTTP_UPDATE_OK:
+                          Serial.println("HTTP_UPDATE_OK");
+                          break;
+                  }
+              }
             }
           }
-        }
-        if (input.startsWith("L")) { //LOG
-          //issue is that we need to disconnect serial for moisture readout so we have split this
-          //moistureValue = analogRead(moisturePin);
-          if(USE_LIDAR ){
-            water_level = lox.readRange();
+          if (input.startsWith("L")) { //LOG
+            //issue is that we need to disconnect serial for moisture readout so we have split this
+            //moistureValue = analogRead(moisturePin);
+            if(USE_LIDAR ){
+              water_distance = lox.readRange();
+            }
+            else water_distance =0;
+          
+            Serial.print(water_distance);
+            Serial.print("  -  ");
+            Serial.println(moistureValue);
           }
-          else water_level =0;
-         
-          Serial.print(water_level);
-          Serial.print("  -  ");
-          Serial.println(moistureValue);
-        }
 
-        if (input.startsWith("R")) { //READ for the moisture value
-          //issue is that we need to disconnect serial for moisture readout so we have split this
-          //toggle led to indicate you can connect the moisture sensor
-          digitalWrite(LEDPIN, LOW);
-          delay(10000);
-          moistureValue = analogRead(moisturePin);
-          digitalWrite(LEDPIN, HIGH);
-          Serial.println("readout done");
-          Serial.println(moistureValue);
-        }
-        if (input.startsWith("V")) { //firmware revision:::
-          Serial.println("version");
-          Serial.println(FW_REV);
-        }
+          if (input.startsWith("R")) { //READ for the moisture value
+            //issue is that we need to disconnect serial for moisture readout so we have split this
+            //toggle led to indicate you can connect the moisture sensor
+            digitalWrite(LEDPIN, LOW);
+            delay(10000);
+            moistureValue = analogRead(moisturePin);
+            digitalWrite(LEDPIN, HIGH);
+            Serial.println("readout done");
+            Serial.println(moistureValue);
+          }
+          if (input.startsWith("V")) { //firmware revision:::
+            Serial.println("version");
+            Serial.println(FW_REV);
+          }
+      }
     }
   }
-}
 }
