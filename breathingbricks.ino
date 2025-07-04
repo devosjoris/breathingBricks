@@ -14,10 +14,6 @@
 
 //get time from server:
 #include <time.h>
-const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 0;
-const int   daylightOffset_sec = 3600;
-
 
 //for FOTA
 #include <HTTPClient.h>
@@ -33,6 +29,10 @@ const int   daylightOffset_sec = 3600;
 /*#define PUMP_ON_TIME 5000 //time in ms
 #define SLEEP_TIME 5*60* 1000000 //time in us (5 minutes)*/
 
+
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 3600 ; //add a day since we want to get the next start time
+const int   daylightOffset_sec = 3600;
 
 //EPAPER
 
@@ -151,6 +151,12 @@ Adafruit_VL6180X lox = Adafruit_VL6180X();
 uint8_t ProductionMode =1;
 
 Epd epd;
+
+
+struct tm timeinfo;
+struct tm nextDay;
+
+int time_succes =0;
 
 uint8_t getFirmwareRevision() {
   HTTPClient http;
@@ -304,28 +310,43 @@ uint8_t ConnectToWifi(void){
     return 0;
 }
 
-void printLocalTime() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo,1000)) {
+int printLocalTime() {
+  if (!getLocalTime(&timeinfo)) {
     Serial.println("Failed to obtain time");
-    return;
+    return 0;
   }
   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+  return 1;
+}
+
+void getNextDay(struct tm currentTime) {
+  // Step 1: Convert to time_t (epoch time)
+  time_t now = mktime(&currentTime);
+
+  // Step 2: Add 24 hours (86400 seconds)
+  time_t tomorrow = now + 86400;
+
+  // Step 3: Convert back to struct tm
+  localtime_r(&tomorrow, &nextDay);
+
+  // Print result
+  Serial.println(&nextDay, "Tomorrow is: %A, %B %d %Y %H:%M:%S");
 }
 
 int getwaterlevel(){
-  if (1) {
-    int switchValue =0;
-    Serial.print("Distance in mm: ");
-    water_distance = lox.readRange();
-    Serial.println(water_distance);
-    if(water_distance > low_THRESHOLD)
-      switchValue = WATER_IS_LOW;
-    else if(water_distance > medium_THRESHOLD)
-      switchValue =WATER_IS_MEDIUM;
-    else switchValue =WATER_IS_HIGH;
-  }
-  return switchValue;
+  int waterValue =0;
+  Serial.print("Distance in mm: ");
+  water_distance = lox.readRange();
+  Serial.println(water_distance);
+  if(water_distance > low_THRESHOLD)
+    waterValue = WATER_IS_LOW;
+  else if(water_distance > medium_THRESHOLD)
+    waterValue =WATER_IS_MEDIUM;
+  else waterValue =WATER_IS_HIGH;
+
+  return waterValue;
+
+  
 }
 
   
@@ -438,8 +459,13 @@ void setup() {
       // Initialize ThingSpeak
       ThingSpeak.begin(client);
       ConnectToWifi();
+      Serial.println("checking time");
       configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-      printLocalTime();
+      Serial.println("print time:");
+      time_succes = printLocalTime();
+      if(time_succes){
+        getNextDay(timeinfo);
+      }
     }
   }
 }
@@ -463,38 +489,43 @@ void loop() {
         switchValue = getwaterlevel();
     }
 
-
     if (USE_LIDAR == 0) { switchValue = digitalRead(FLOAT_SWITCH_PIN)  + 2*digitalRead(FLOAT_SWITCH_PIN2);}
+    
+    pinMode(LEDPIN, OUTPUT);
+    digitalWrite(LEDPIN, LOW);
+
+
     if (switchValue == WATER_IS_LOW) {//both switches are low
       Serial.println("Water Level NOT OK");
       printEP("Out of water","refill ", "immediately!", "Your plant's ", "counting on you"); 
-      pinMode(LEDPIN, OUTPUT);
-      digitalWrite(LEDPIN, HIGH); //emable 3.3V switch LDO
+      digitalWrite(LEDPIN, HIGH); //red led indicates water low
+      WaterLevel= "Low";
 
-      while((switchValue == WATER_IS_LOW)){
-        water_distance = lox.readRange();
-        if(water_distance < low_THRESHOLD){
-          switchValue = 
+      //TODO probably good to add a thingspeak post here so the app can give notification for refill?
+      // ThingSpeak.setField(myFieldNumber, WaterLevel); //works with strings?
+      // int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
+      // if (status2 == 200) {
+      //   Serial.println("Channel update successful.");
+      // } else {
+      //   Serial.println("Problem updating channel. HTTP error code " + String(status2));
+      // }
 
+      while((switchValue != WATER_IS_HIGH)){ //added hysteresis it will only trigger when high, not just on medium...
+          switchValue = getwaterlevel();
+          delay(1000);
       }
-      
-
     }
     
-    {
-      Serial.println("Water Level Good");
-      if (switchValue == WATER_IS_HIGH){
-        WaterLevel= "High.";
-      }
-      else{
-        WaterLevel= "Medium.";
-      }
-      printEP("Breathing Block","Checking up","on plant", "WaterLevel", "");
-    }
+    digitalWrite(LEDPIN, LOW); //emable 3.3V switch LDO
 
-    if (shouldEndProgram) {
-      return; // End the program if the water level is not OK, the led light keeps burning...
+    Serial.println("Water Level Good");
+    if (switchValue == WATER_IS_HIGH){
+      WaterLevel= "High";
     }
+    else{
+      WaterLevel= "Medium";
+    }
+    printEP("Breathing Block","Checking up","on plant", "", "");
 
     // If moisture level is above a threshold, turn on the pump
     printOLED("Checking", "Moisture",2);
@@ -519,20 +550,30 @@ void loop() {
         Serial.println("Pump turned off");
 
         printOLED("Plant OK","",2);
-        printEP("All green! ","your plant's", "doing great","Next check on", WaterLevel);
       }
     }
     else {
       Serial.println("No watering needed");
-      if(switchValue !=3){
-        printEP("Breathing Block","Plant OK","Water Level", WaterLevel, "");
-      }
+      // if(switchValue !=3){
+      //   printEP("Breathing Block","Plant OK","Water Level", WaterLevel, "");
+      // }
+    }
 
+    //we will check again tomorrow:
+    // Now 'buffer' holds your formatted string
+    String formattedDate;
+    char buffer[64];
+    if(time_succes){
+      strftime(buffer, sizeof(buffer), "%d %B %H:%M", &nextDay);
+      formattedDate = String(buffer);
+    }
+    else{
+      formattedDate = "Tomorrow";
     }
 
 
+    printEP("All green! ","your plant's", "doing great", "Next check :", formattedDate);
     //here we update the wifi:
-
     //reduce the current consumption by disabling everythign not wifi:
     //screen /moisture sensor and pump...
     //digitalWrite(V3V3Pin,LOW); probably ok to keep screen and moisture sensor on...
@@ -548,7 +589,7 @@ void loop() {
     }
 
     // Write sensor value of water switch to ThingSpeak
-    ThingSpeak.setField(myFieldNumber, switchValue);
+    ThingSpeak.setField(myFieldNumber, WaterLevel); //works with strings?
     int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
     if (status2 == 200) {
       Serial.println("Channel update successful.");
@@ -615,6 +656,10 @@ void loop() {
                   }
               }
             }
+          }
+          if (input.startsWith("C")) {
+            //clear the stored wifi conneciotns
+            wifiManager.resetSettings();
           }
           if (input.startsWith("L")) { //LOG
             //issue is that we need to disconnect serial for moisture readout so we have split this
