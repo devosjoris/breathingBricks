@@ -220,11 +220,11 @@ void Epd::SendData(unsigned char data) {
  *  @brief: Wait until the busy_pin goes HIGH
  */
 void Epd::ReadBusy(void) {
-    Serial.print("e-Paper busy\r\n");
+    //Serial.print("e-Paper busy\r\n");
     while(DigitalRead(busy_pin) == 1) {      //1: busy, 0: idle
         DelayMs(100);
     }      
-    Serial.print("e-Paper busy release\r\n");
+    //Serial.print("e-Paper busy release\r\n");
 }
 
 /**
@@ -402,7 +402,7 @@ void Epd::Display_Partial(unsigned char* Image, unsigned int  Xstart, unsigned i
 	
 	Width = Xend -  Xstart;
 	IMAGE_COUNTER = Width * (Yend-Ystart);
-    Serial.println(IMAGE_COUNTER);
+    //Serial.println(IMAGE_COUNTER);
 
 	Xend -= 1;
 	Yend -= 1;	
@@ -454,7 +454,7 @@ void Epd::Display_Partial_Not_refresh(unsigned char* Image, unsigned int  Xstart
 	
 	Width = Xend -  Xstart;
 	IMAGE_COUNTER = Width * (Yend-Ystart);
-    Serial.println(IMAGE_COUNTER);
+    //Serial.println(IMAGE_COUNTER);
 
 	Xend -= 1;
 	Yend -= 1;	

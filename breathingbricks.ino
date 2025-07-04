@@ -12,6 +12,13 @@
 //for sleep pin retention
 #include "driver/rtc_io.h"
 
+//get time from server:
+#include <time.h>
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 0;
+const int   daylightOffset_sec = 3600;
+
+
 //for FOTA
 #include <HTTPClient.h>
 #include <ESP32httpUpdate.h>
@@ -36,6 +43,8 @@
 //#include "epd1in54B_V2.h" the black and white and red variant 
 #include "imagedata.h"
 #include "epdpaint.h"
+
+
 
 
 #define COLORED     0
@@ -202,7 +211,7 @@ void printOLED(String toPrint1,String toPrint2,uint8_t txtSize){
 }
 
 
-void printEP(String headerString, String toPrint1,String toPrint2,String toPrint3){
+void printEP(String headerString, String toPrint1,String toPrint2,String toPrint3, String toPrint4){
 
   if(USE_EPAPER ==0) return;
 
@@ -220,21 +229,28 @@ void printEP(String headerString, String toPrint1,String toPrint2,String toPrint
       epd.Display_Base_color(0xff);
       //delay(1000);
 
+      #define FIRSTLINE 32
+      #define LINESPACE 28
+
 
       paint.Clear(COLORED);
       paint.DrawStringAt(0, 5, headerString.c_str(), &Font16, UNCOLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, 32, 0+paint.GetWidth(), 32+paint.GetHeight());
+      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE, 0+paint.GetWidth(), FIRSTLINE+paint.GetHeight());
       paint.Clear(UNCOLORED);
       paint.DrawStringAt(10, 5,toPrint1.c_str(), &Font16, COLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, 64, 0+paint.GetWidth(), 64+paint.GetHeight());
+      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE + 1 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 1 * LINESPACE +paint.GetHeight());
       
       paint.Clear(UNCOLORED);
       paint.DrawStringAt(10, 5, toPrint2.c_str(), &Font16, COLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, 96, 0+paint.GetWidth(), 96+paint.GetHeight());
+      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE + 2 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 2 * LINESPACE +paint.GetHeight());
 
       paint.Clear(UNCOLORED);
       paint.DrawStringAt(10, 5, toPrint3.c_str(), &Font16, COLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, 128, 0+paint.GetWidth(), 128+paint.GetHeight());
+      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE + 3 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 3 * LINESPACE +paint.GetHeight());
+
+      paint.Clear(UNCOLORED);
+      paint.DrawStringAt(10, 5, toPrint4.c_str(), &Font16, COLORED);
+      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE + 4 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 4 * LINESPACE +paint.GetHeight());
 
       epd.TurnOnDisplay();
     }
@@ -263,7 +279,7 @@ uint8_t ConnectToWifi(void){
       Serial.println("\nConnected to Wi-Fi!");
       Serial.print("IP Address: ");
       Serial.println(WiFi.localIP());
-      printEP("Breathing Block","WiFi", "connected","");
+      printEP("Breathing Block","WiFi", "connected","", "");
       delay(5000);
       return 1;
     }
@@ -276,17 +292,43 @@ uint8_t ConnectToWifi(void){
     wifiManager.setTimeout(120); // set the portal timeout to 120 seconds
     
     unsigned long startTime = millis();
-      printEP(" Setup WiFi", "connect to", "'BB Connect'", "on phone");
+      printEP(" Setup WiFi", "connect to", "'BB Connect'", "on phone", "");
       if (wifiManager.autoConnect("BB-Connect")) {
           delay(1000); 
           Serial.println("WiFi connected");
-          printEP("Breathing Block","WiFi", "connected","");
+          printEP("Breathing Block","WiFi", "connected","", "");
           delay(5000);
       } else {
           Serial.println("AP TIMEOUT") ;
       }
     return 0;
 }
+
+void printLocalTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo,1000)) {
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+}
+
+int getwaterlevel(){
+  if (1) {
+    int switchValue =0;
+    Serial.print("Distance in mm: ");
+    water_distance = lox.readRange();
+    Serial.println(water_distance);
+    if(water_distance > low_THRESHOLD)
+      switchValue = WATER_IS_LOW;
+    else if(water_distance > medium_THRESHOLD)
+      switchValue =WATER_IS_MEDIUM;
+    else switchValue =WATER_IS_HIGH;
+  }
+  return switchValue;
+}
+
+  
 
 void setup() {
 
@@ -317,10 +359,13 @@ void setup() {
   //initialize the charger:
   // Configure GPIO14 as output and set it HIGH, this pin remains high in deep sleep:
   //alternative is to just set the jumper JP2 (probably better for power consumption)
-  pinMode(CHARGING_PIN, INPUT_PULLUP);
-  rtc_gpio_pullup_en((gpio_num_t)CHARGING_PIN);
-  //rtc_gpio_hold_en(CHARGING_PIN);
-  gpio_deep_sleep_hold_en(); // Enable global deep sleep hold
+
+  //why do we have wakeup?
+
+  // pinMode(CHARGING_PIN, INPUT_PULLUP);
+  // rtc_gpio_pullup_en((gpio_num_t)CHARGING_PIN);
+  // //rtc_gpio_hold_en(CHARGING_PIN);
+  // gpio_deep_sleep_hold_en(); // Enable global deep sleep hold
 
   if(USE_OLED){
       // Initialize OLED display
@@ -342,19 +387,16 @@ void setup() {
 //this is the arduino code in the waveshare repository (so not the esp32...)
   if(USE_EPAPER){
       EPAPER_STATUS = epd.Init();
-      Serial.println("EPAPER_A");
       if(EPAPER_STATUS==0){
-        Serial.println("EPAPER_B");
         epd.Clear();
         epd.Display_Base_color(0xff);
-        Serial.println("EPAPER_C");
       }
   }
   Serial.println("EPAPER_DONE");
 
   //epd.Display(IMAGE_DATA);
   //delay(5000);
-  printEP("Breathing Block","Tuning into", "nature ...", "almost there!"); 
+  printEP("Breathing Block","Tuning into", "nature ...", "almost there!", ""); 
 
 
   // wait 10s for serial message
@@ -396,6 +438,8 @@ void setup() {
       // Initialize ThingSpeak
       ThingSpeak.begin(client);
       ConnectToWifi();
+      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+      printLocalTime();
     }
   }
 }
@@ -416,29 +460,28 @@ void loop() {
     uint8_t switchValue =0;
 
     if(USE_LIDAR){
-        if (1) {
-          Serial.print("Distance in mm: ");
-          water_distance = lox.readRange();
-          Serial.println(water_distance);
-          if(water_distance > low_THRESHOLD)
-            switchValue = WATER_IS_LOW;
-          else if(water_distance > medium_THRESHOLD)
-            switchValue =WATER_IS_MEDIUM;
-          else switchValue =WATER_IS_HIGH;
-        }
+        switchValue = getwaterlevel();
     }
 
 
     if (USE_LIDAR == 0) { switchValue = digitalRead(FLOAT_SWITCH_PIN)  + 2*digitalRead(FLOAT_SWITCH_PIN2);}
     if (switchValue == WATER_IS_LOW) {//both switches are low
       Serial.println("Water Level NOT OK");
-      printEP("Breathing Block","Refill Water", "Can't water", "plants!"); 
+      printEP("Out of water","refill ", "immediately!", "Your plant's ", "counting on you"); 
       pinMode(LEDPIN, OUTPUT);
       digitalWrite(LEDPIN, HIGH); //emable 3.3V switch LDO
 
-      shouldEndProgram=true;
+      while((switchValue == WATER_IS_LOW)){
+        water_distance = lox.readRange();
+        if(water_distance < low_THRESHOLD){
+          switchValue = 
 
-    } else {
+      }
+      
+
+    }
+    
+    {
       Serial.println("Water Level Good");
       if (switchValue == WATER_IS_HIGH){
         WaterLevel= "High.";
@@ -446,11 +489,11 @@ void loop() {
       else{
         WaterLevel= "Medium.";
       }
-      printEP("Breathing Block","","Water Level", WaterLevel);
+      printEP("Breathing Block","Checking up","on plant", "WaterLevel", "");
     }
 
     if (shouldEndProgram) {
-      return; // End the program if the water level is not OK
+      return; // End the program if the water level is not OK, the led light keeps burning...
     }
 
     // If moisture level is above a threshold, turn on the pump
@@ -458,13 +501,16 @@ void loop() {
     if (moistureValue > defaultMoisture) { //too dry
       if(switchValue ==WATER_IS_LOW){ //water level is NOK, should never happen duetoo the should_end_program triggered above
         printOLED("Can't water", "plants",1);
-        printEP("Breathing Block","Refill", "Immediately", "and press Reset.");
+        printEP("Breathing Block","Refill", "Immediately", "and press Reset.", "");
       }
       else{
         printOLED("Plant Dry", "Pumping",2);
+        printEP("Plant's dry!","Time to splash ", "some water ", "on it!", "");
+        delay(1000);
 
         Serial.println("Pump turned on");
         analogWrite(pumpPin, PUMP_PWM);
+        printEP("Breathing Block","Here comes ", "the water ", "", "");
         delay(PUMP_ON_TIME); // Run Pump for 30 seconds
 
         //Turn Pump Off
@@ -473,13 +519,13 @@ void loop() {
         Serial.println("Pump turned off");
 
         printOLED("Plant OK","",2);
-        printEP("Breathing Block","Plant OK","Water Level", WaterLevel);
+        printEP("All green! ","your plant's", "doing great","Next check on", WaterLevel);
       }
     }
     else {
       Serial.println("No watering needed");
       if(switchValue !=3){
-        printEP("Breathing Block","Plant OK","Water Level", WaterLevel);
+        printEP("Breathing Block","Plant OK","Water Level", WaterLevel, "");
       }
 
     }
