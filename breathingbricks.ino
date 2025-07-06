@@ -10,7 +10,7 @@
 
 
 //for sleep pin retention
-#include "driver/rtc_io.h"
+//#include "driver/rtc_io.h"
 
 //get time from server:
 #include <time.h>
@@ -20,7 +20,7 @@
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 15
+#define FW_REV 22
 
 #define PUMP_ON_TIME 10000 //controls the flow
 #define PUMP_PWM 180 //sets the pump power
@@ -92,8 +92,8 @@ unsigned long Channel2 = 2413649; // Change to your channel number
 int myFieldNumber = 1; // Change to the field number you wish to update
 
 //the engineering mode thingspeak, for checking sensor performance
-const char* writeAPIKey3 = "04QB4ERJUWODH4BC";
-unsigned long Channel3 =2864883;
+const char* writeAPIKey3 = "IYY43OELEJ36QNBT";
+unsigned long Channel3 =3003483;
 
 //Connect to WebClient
 WiFiClient client;
@@ -285,7 +285,7 @@ uint8_t ConnectToWifi(void){
       Serial.println("\nConnected to Wi-Fi!");
       Serial.print("IP Address: ");
       Serial.println(WiFi.localIP());
-      printEP("Breathing Block","WiFi", "connected","", "");
+      printEP("Breathing Block","WiFi", "connected","", ""); //OK
       delay(5000);
       return 1;
     }
@@ -298,11 +298,11 @@ uint8_t ConnectToWifi(void){
     wifiManager.setTimeout(120); // set the portal timeout to 120 seconds
     
     unsigned long startTime = millis();
-      printEP(" Setup WiFi", "connect to", "'BB Connect'", "on phone", "");
+      printEP(" Setup WiFi", "connect to", "'BB Connect'", "on phone", ""); //OK
       if (wifiManager.autoConnect("BB-Connect")) {
           delay(1000); 
           Serial.println("WiFi connected");
-          printEP("Breathing Block","WiFi", "connected","", "");
+          printEP("Breathing Block","WiFi", "connected","", ""); //OK
           delay(5000);
       } else {
           Serial.println("AP TIMEOUT") ;
@@ -381,12 +381,14 @@ void setup() {
   // Configure GPIO14 as output and set it HIGH, this pin remains high in deep sleep:
   //alternative is to just set the jumper JP2 (probably better for power consumption)
 
-  //why do we have wakeup?
-
-  // pinMode(CHARGING_PIN, INPUT_PULLUP);
-  // rtc_gpio_pullup_en((gpio_num_t)CHARGING_PIN);
-  // //rtc_gpio_hold_en(CHARGING_PIN);
-  // gpio_deep_sleep_hold_en(); // Enable global deep sleep hold
+  #define PULL_CHARGE_IN_SLEEP 0
+  
+  // if(PULL_CHARGE_IN_SLEEP){
+  //   pinMode(CHARGING_PIN, INPUT_PULLUP);
+  //   rtc_gpio_pullup_en((gpio_num_t)CHARGING_PIN);
+  //   //rtc_gpio_hold_en(CHARGING_PIN);
+  //   gpio_deep_sleep_hold_en(); // Enable global deep sleep hold
+  // }
 
   if(USE_OLED){
       // Initialize OLED display
@@ -417,7 +419,7 @@ void setup() {
 
   //epd.Display(IMAGE_DATA);
   //delay(5000);
-  printEP("Breathing Block","Tuning into", "nature ...", "almost there!", ""); 
+  printEP("Breathing Block","Tuning into", "nature ...", "almost there!", "");  //OK
 
 
   // wait 10s for serial message
@@ -443,15 +445,15 @@ void setup() {
     // enable it short
 
     //BUG; this is not a valid esp32 adc channel
-    digitalWrite(pumpPin, HIGH);
-    delay(100);
+    //digitalWrite(pumpPin, HIGH);
+    //delay(100);
 
     VBAT_VOLT_DIV2 = analogRead(VBAT_DIV);
     Serial.println("VBAT");
     Serial.println(VBAT_VOLT_DIV2);
 
     Serial.flush();
-    digitalWrite(LEDPIN, LOW);
+    digitalWrite(pumpPin, LOW);
     delay(1000);
 
     //check the Wifi:
@@ -497,7 +499,7 @@ void loop() {
 
     if (switchValue == WATER_IS_LOW) {//both switches are low
       Serial.println("Water Level NOT OK");
-      printEP("Out of water","refill ", "immediately!", "Your plant's ", "counting on you"); 
+      printEP("Out of water","refill ", "immediately!", "Your plant's ", "counting on you"); //OK
       digitalWrite(LEDPIN, HIGH); //red led indicates water low
       WaterLevel= "Low";
 
@@ -525,23 +527,23 @@ void loop() {
     else{
       WaterLevel= "Medium";
     }
-    printEP("Breathing Block","Checking up","on plant", "", "");
+    printEP("Breathing Block","Checking up","on plant", "", ""); //OK
 
     // If moisture level is above a threshold, turn on the pump
     printOLED("Checking", "Moisture",2);
     if (moistureValue > defaultMoisture) { //too dry
       if(switchValue ==WATER_IS_LOW){ //water level is NOK, should never happen duetoo the should_end_program triggered above
         printOLED("Can't water", "plants",1);
-        printEP("Breathing Block","Refill", "Immediately", "and press Reset.", "");
+        printEP("Breathing Block","Refill", "Immediately", "and press Reset.", ""); //NA
       }
       else{
         printOLED("Plant Dry", "Pumping",2);
-        printEP("Plant's dry!","Time to splash ", "some water ", "on it!", "");
+        printEP("Plant's dry!","Time to splash ", "some water ", "on it!", ""); //OK
         delay(1000);
 
         Serial.println("Pump turned on");
         analogWrite(pumpPin, PUMP_PWM);
-        printEP("Breathing Block","Here comes ", "the water ", "", "");
+        printEP("Breathing Block","Here comes ", "the water ", "", ""); //OK
         delay(PUMP_ON_TIME); // Run Pump for 30 seconds
 
         //Turn Pump Off
@@ -572,7 +574,9 @@ void loop() {
     }
 
 
-    printEP("All green! ","your plant's", "doing great", "Next check :", formattedDate);
+    printEP("All green! ","your plant's", "doing great", "Next check :", formattedDate); //OK
+
+
     //here we update the wifi:
     //reduce the current consumption by disabling everythign not wifi:
     //screen /moisture sensor and pump...
@@ -596,6 +600,16 @@ void loop() {
     } else {
       Serial.println("Problem updating channel. HTTP error code " + String(status2));
     }
+
+    // Write VBAT value of water switch to ThingSpeak
+    ThingSpeak.setField(myFieldNumber, VBAT_VOLT_DIV2);
+    int status3 = ThingSpeak.writeFields(Channel3, writeAPIKey3);
+    if (status3 == 200) {
+      Serial.println("Channel update successful.");
+    } else {
+      Serial.println("Problem updating channel. HTTP error code " + String(status2));
+    }
+
 
     // Make All Lights Green
     /*for (int i = 0; i < strip.numPixels(); i++) {
