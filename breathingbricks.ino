@@ -24,11 +24,14 @@ int wifi_connected =0;
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 26
+#define FW_REV        26
 
-#define PUMP_ON_TIME 10000 //controls the flow
-#define PUMP_PWM 180 //sets the pump power
-#define SLEEP_TIME 86400000000ULL //24*3600*1E6 don't write it as a formula since that will cast it to long, it truncates to 500654080 which corresponds to 500s (9.5minutes)
+#define PUMP_ON_TIME  10000 //controls the flow
+#define PUMP_PWM      180 //sets the pump power
+#define SLEEP_TIME    86400000000ULL //24*3600*1E6 don't write it as a formula since that will cast it to long, it truncates to 500654080 which corresponds to 500s (9.5minutes)
+
+#define NUM_AVG_VBAT  32
+#define NUM_AVG_LEVEL 32
 
 /*#define PUMP_ON_TIME 5000 //time in ms
 #define SLEEP_TIME 5*60* 1000000 //time in us (5 minutes)*/
@@ -280,6 +283,13 @@ const unsigned char* epd_bitmap_allArray[1] = {
 
 #define LEDPIN 47
 
+hw_timer_t *Timer0_Cfg = NULL;
+ 
+void IRAM_ATTR Timer0_ISR()
+{
+    digitalWrite(LEDPIN, !digitalRead(LEDPIN));
+}
+
 //for readability and compatibility between lidar and level switches
 #define WATER_IS_HIGH     0  //both switches toggled
 #define WATER_IS_MEDIUM   1  //only one switch toggled
@@ -389,8 +399,11 @@ int measure_vbat(){
   Serial.println("VBAT_MEAS");
   pinMode(VBAT_DIV, INPUT);
   Serial.println("VBAT_MEAS_A");
-  uint32_t vbat_div2 = ReadVoltage(VBAT_DIV);
-  vbat_div2=(vbat_div2 * 195) / 232;
+  uint32_t vbat_div2 = 0;
+  for(int i=0; i<NUM_AVG_VBAT;i++){ //averaging...
+    vbat_div2 += ReadVoltage(VBAT_DIV);
+  }
+  vbat_div2=(vbat_div2 / NUM_AVG_VBAT * 195) / 232;
 
     //   division
 
@@ -404,7 +417,7 @@ int measure_vbat(){
 
 
 
-  if(1){ //write it to screen since we can't tune vbat voltage when serial (usb charger is connected)
+  if(0){ //write it to screen since we can't tune vbat voltage when serial (usb charger is connected)
     printEP("vbat_V",(String) (vbat_div2*2), "...", "...", "");  //OK
     delay(3000);
   }
@@ -473,104 +486,55 @@ void printOLED(String toPrint1,String toPrint2,uint8_t txtSize){
 void printEP(String headerString, String toPrint1,String toPrint2,String toPrint3, String toPrint4){
 
   if(USE_EPAPER ==0) return;
-  Serial.println("VBAT_PRINT:");
-  Serial.println(vbat_div2_mv);
-  int vbat_percent = ((vbat_div2_mv - 1800) *100) / (2100-1800);
-  if(vbat_percent <0)   vbat_percent=0;
-  if(vbat_percent >=100) vbat_percent=99;
-  Serial.println(vbat_percent);
 
-  char vbat_percent_string [3];
-  vbat_percent_string[0] = '0' + ((vbat_percent) / 10);
-  if( vbat_percent_string[0] == '0') vbat_percent_string[0] = ' ';
-  vbat_percent_string[1] = '0' + (vbat_percent %10);
-  vbat_percent_string[2] = '%';
 
-  int wifiDash =0;
-
-  if(wifi_connected){
-    int wifiStrength = WiFi.RSSI();
-    Serial.println("WIFI");
-    Serial.println(wifiStrength);
-    if(wifiStrength < -80)
-      wifiDash = 1;
-    else if(wifiStrength <-70)
-      wifiDash = 2;
-    else if(wifiStrength <-60)
-      wifiDash = 3;
-    else if(wifiStrength <-50)
-      wifiDash = 4;
-    else
-      wifiDash = 5;
+  uint8_t image[EPD_HEIGHT * EPD_WIDTH / 8];
+  Paint paint(image, EPD_WIDTH, EPD_HEIGHT);    //width should be the multiple of 8, this is a sub of the screen,,,
+  if(EPAPER_STATUS !=0) { //TBD this has to run each time we enable the V3V pins (so on powerup!!)
+    Serial.println(F("SSD1306 allocation failed"));
   }
-  else
-    wifiDash = 0;
+  else{
 
 
-  
+    #define FIRSTLINE 32
+    #define LINESPACE 28
 
-  char wifi_vbat [10];
-  for(int i =0; i<9; i++){
-    wifi_vbat[i] = ' ';
+    #define BAT_START_X 80
+    #define BAT_START_Y 0
+    
+    //epd.Display_Partial_Not_refresh(epd_bitmap_battery, BAT_START_X, BAT_START_Y, BAT_START_X + 18, BAT_START_Y + 32);
+    
+    paint.Clear(UNCOLORED);
+    //paint.DrawStringAt(0, 5, wifi_vbat, &Font16, COLORED);
+    //epd.Display_Partial(paint.GetImage(), 0, 10, 0+paint.GetWidth(), 10+paint.GetHeight());
+
+
+    paint.Clear(COLORED);
+    paint.DrawStringAt(0, 5, headerString.c_str(), &Font16, UNCOLORED);
+    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE, 0+paint.GetWidth(), FIRSTLINE+paint.GetHeight());
+    delay(1000);
+    paint.Clear(UNCOLORED);
+    paint.DrawStringAt(10, 5,toPrint1.c_str(), &Font16, COLORED);
+    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE + 1 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 1 * LINESPACE +paint.GetHeight());
+    delay(1000);
+    
+    paint.Clear(UNCOLORED);
+    paint.DrawStringAt(10, 5, toPrint2.c_str(), &Font16, COLORED);
+    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE + 2 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 2 * LINESPACE +paint.GetHeight());
+    delay(1000);
+
+    paint.Clear(UNCOLORED);
+    paint.DrawStringAt(10, 5, toPrint3.c_str(), &Font16, COLORED);
+    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE + 3 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 3 * LINESPACE +paint.GetHeight());
+    delay(1000);
+
+    paint.Clear(UNCOLORED);
+    paint.DrawStringAt(10, 5, toPrint4.c_str(), &Font16, COLORED);
+    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE + 4 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 4 * LINESPACE +paint.GetHeight());
+    delay(1000);
   }
-  wifi_vbat[9] = 0; //EOS
-  wifi_vbat[2]=vbat_percent_string[0];
-  wifi_vbat[3]=vbat_percent_string[1];
-  wifi_vbat[4]=vbat_percent_string[2];
-
-  wifi_vbat[8] = '0' + wifiDash; 
 
 
-  unsigned char image[1024];
-  Paint paint(image, 176, 24);    //width should be the multiple of 8, this is a sub of the screen,,,
-  unsigned char image_small[256];
-  Paint paint2(image_small, 44, 24);    //width should be the multiple of 8, this is a sub of the screen,,,
-  for(int retry =0; retry<1; retry++){
-    if(EPAPER_STATUS !=0) { //TBD this has to run each time we enable the V3V pins (so on powerup!!)
-      Serial.println(F("SSD1306 allocation failed"));
-    }
-    else{
-
-      //delay(1000);
-      epd.Clear();
-      //delay(1000);
-      epd.Display_Base_color(0xff);
-      //delay(1000);
-
-      #define FIRSTLINE 32
-      #define LINESPACE 28
-
-      #define BAT_START_X 80
-      #define BAT_START_Y 0
-      
-      //epd.Display_Partial_Not_refresh(epd_bitmap_battery, BAT_START_X, BAT_START_Y, BAT_START_X + 18, BAT_START_Y + 32);
-      
-      paint.Clear(UNCOLORED);
-      paint.DrawStringAt(0, 5, wifi_vbat, &Font16, COLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, 10, 0+paint.GetWidth(), 10+paint.GetHeight());
-
-
-      paint.Clear(COLORED);
-      paint.DrawStringAt(0, 5, headerString.c_str(), &Font16, UNCOLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE, 0+paint.GetWidth(), FIRSTLINE+paint.GetHeight());
-      paint.Clear(UNCOLORED);
-      paint.DrawStringAt(10, 5,toPrint1.c_str(), &Font16, COLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE + 1 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 1 * LINESPACE +paint.GetHeight());
-      
-      paint.Clear(UNCOLORED);
-      paint.DrawStringAt(10, 5, toPrint2.c_str(), &Font16, COLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE + 2 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 2 * LINESPACE +paint.GetHeight());
-
-      paint.Clear(UNCOLORED);
-      paint.DrawStringAt(10, 5, toPrint3.c_str(), &Font16, COLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE + 3 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 3 * LINESPACE +paint.GetHeight());
-
-      paint.Clear(UNCOLORED);
-      paint.DrawStringAt(10, 5, toPrint4.c_str(), &Font16, COLORED);
-      epd.Display_Partial_Not_refresh(paint.GetImage(), 0, FIRSTLINE + 4 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 4 * LINESPACE +paint.GetHeight());
-      epd.TurnOnDisplay();
-    }
-  }
   Serial.println("EPAPER_UPDATE_DONE");
   delay(2500);
 }
@@ -647,11 +611,14 @@ void getNextDay(struct tm currentTime) {
 int getwaterlevel(){
   int waterValue =0;
   Serial.print("Distance in mm: ");
-  water_distance = lox.readRange();
-  Serial.println(water_distance);
-  if(water_distance > low_THRESHOLD)
+  for(int i=0; i<NUM_AVG_LEVEL; i++){
+    water_distance += lox.readRange();
+    Serial.println(water_distance);
+  }
+
+  if(water_distance > low_THRESHOLD * NUM_AVG_LEVEL)
     waterValue = WATER_IS_LOW;
-  else if(water_distance > medium_THRESHOLD)
+  else if(water_distance > medium_THRESHOLD * NUM_AVG_LEVEL)
     waterValue =WATER_IS_MEDIUM;
   else waterValue =WATER_IS_HIGH;
 
@@ -660,20 +627,46 @@ int getwaterlevel(){
   
 }
 
+void updatethingspeak(){
+    ThingSpeak.setField(myFieldNumber, moistureValue);
+    int status1 = ThingSpeak.writeFields(Channel1, writeAPIKey1);
+    if (status1 == 200) {
+      Serial.println("Channel update successful.");
+    } else {
+      Serial.println("Problem updating channel. HTTP error code " + String(status1));
+    }
+
+    // Write sensor value of water switch to ThingSpeak
+    ThingSpeak.setField(myFieldNumber, WaterLevelTP); //works with strings?
+    int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
+    if (status2 == 200) {
+      Serial.println("Channel update successful.");
+    } else {
+      Serial.println("Problem updating channel. HTTP error code " + String(status2));
+    }
+
+    // Write VBAT value of water switch to ThingSpeak
+    ThingSpeak.setField(myFieldNumber, vbat_div2_mv);
+    int status3 = ThingSpeak.writeFields(Channel3, writeAPIKey3);
+    if (status3 == 200) {
+      Serial.println("Channel update successful.");
+    } else {
+      Serial.println("Problem updating channel. HTTP error code " + String(status3));
+    }
+}
   
 
 void setup() {
 
-  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
-
-  //blink the led to indicate button press
+  //blink the led while booting, feedback when button is pressed.
   pinMode(LEDPIN, OUTPUT);
-  for(int tempi =0; tempi < 10; tempi++){
-    digitalWrite(LEDPIN, HIGH);
-    delay(500);
-    digitalWrite(LEDPIN, LOW);
-    delay(500);
-  }
+  digitalWrite(LEDPIN,1);
+  Timer0_Cfg = timerBegin(0, 240, true); //240Mhz clock -> 1us
+  timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR, true);
+  timerAlarmWrite(Timer0_Cfg, 500000, true); //0.5Meg *1us =1s
+  timerAlarmEnable(Timer0_Cfg);
+
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
   
   // Initialize serial communication
   Serial.begin(115200);
@@ -733,12 +726,10 @@ void setup() {
       if(EPAPER_STATUS==0){
         epd.Clear();
         epd.Display_Base_color(0xff);
+        epd.TurnOnDisplay_Partial();
       }
   }
   Serial.println("EPAPER_DONE");
-
-
-
   int x = 0, y = 0, w = 150, h = 151;
 
 
@@ -746,16 +737,12 @@ void setup() {
   epd.Display_Partial(bb_logo_image_data, x, y, w + x, h + y);
   delay(2000);
   epd.Clear();
-  //x = 100, y = 0, w = 18, h = 32;
-  //epd.Display_Partial(epd_bitmap_battery, x, y, w, h);
-  //delay(2000);
-  
 
-  //epd.Display(IMAGE_DATA);
-  //delay(5000);
   vbat_div2_mv = measure_vbat();
   printEP("Breathing Block","Tuning into", "nature ...", "almost there!", "");  //OK
-  
+    //booting is done so stop blinking the led...
+  timerAlarmDisable(Timer0_Cfg);
+  digitalWrite(LEDPIN, 0);
 
   // wait 10s for serial message
   ProductionMode=1;
@@ -837,31 +824,7 @@ void loop() {
       WaterLevel= "Low";
       WaterLevelTP =0;
 
-      ThingSpeak.setField(myFieldNumber, moistureValue);
-      int status1b = ThingSpeak.writeFields(Channel1, writeAPIKey1);
-      if (status1b == 200) {
-        Serial.println("Channel update successful.");
-      } else {
-        Serial.println("Problem updating channel. HTTP error code " + String(status1b));
-      }
-
-      // Write sensor value of water switch to ThingSpeak
-      ThingSpeak.setField(myFieldNumber, WaterLevelTP); //works with strings?
-      int status2b = ThingSpeak.writeFields(Channel2, writeAPIKey2);
-      if (status2b == 200) {
-        Serial.println("Channel update successful.");
-      } else {
-        Serial.println("Problem updating channel. HTTP error code " + String(status2b));
-      }
-
-      // Write VBAT value of water switch to ThingSpeak
-      ThingSpeak.setField(myFieldNumber, vbat_div2_mv);
-      int status3b = ThingSpeak.writeFields(Channel3, writeAPIKey3);
-      if (status3b == 200) {
-        Serial.println("Channel update successful.");
-      } else {
-        Serial.println("Problem updating channel. HTTP error code " + String(status3b));
-      }
+      updatethingspeak();
 
 
       delay(60000);
@@ -871,14 +834,6 @@ void loop() {
       esp_sleep_enable_timer_wakeup(SLEEP_TIME); // Set wake-up time to 10 seconds
       esp_deep_sleep_start(); // Enter deep sleep mode
 
-      //TODO probably good to add a thingspeak post here so the app can give notification for refill?
-      // ThingSpeak.setField(myFieldNumber, WaterLevel); //works with strings?
-      // int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
-      // if (status2 == 200) {
-      //   Serial.println("Channel update successful.");
-      // } else {
-      //   Serial.println("Problem updating channel. HTTP error code " + String(status2));
-      // }
 
       while((switchValue != WATER_IS_HIGH)){ //added hysteresis it will only trigger when high, not just on medium...
           switchValue = getwaterlevel();
@@ -954,31 +909,8 @@ void loop() {
     digitalWrite(pumpPin,LOW);
 
         // Write sensor value of moisture level to ThingSpeak
-    ThingSpeak.setField(myFieldNumber, moistureValue);
-    int status1 = ThingSpeak.writeFields(Channel1, writeAPIKey1);
-    if (status1 == 200) {
-      Serial.println("Channel update successful.");
-    } else {
-      Serial.println("Problem updating channel. HTTP error code " + String(status1));
-    }
+    updatethingspeak();
 
-    // Write sensor value of water switch to ThingSpeak
-    ThingSpeak.setField(myFieldNumber, WaterLevelTP); //works with strings?
-    int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
-    if (status2 == 200) {
-      Serial.println("Channel update successful.");
-    } else {
-      Serial.println("Problem updating channel. HTTP error code " + String(status2));
-    }
-
-    // Write VBAT value of water switch to ThingSpeak
-    ThingSpeak.setField(myFieldNumber, vbat_div2_mv);
-    int status3 = ThingSpeak.writeFields(Channel3, writeAPIKey3);
-    if (status3 == 200) {
-      Serial.println("Channel update successful.");
-    } else {
-      Serial.println("Problem updating channel. HTTP error code " + String(status2));
-    }
 
 
     // Make All Lights Green
