@@ -24,7 +24,7 @@ int wifi_connected =0;
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV 22
+#define FW_REV 26
 
 #define PUMP_ON_TIME 10000 //controls the flow
 #define PUMP_PWM 180 //sets the pump power
@@ -341,6 +341,7 @@ int EPAPER_STATUS=0;
 #define USE_OLED 0
 
 String WaterLevel = "";
+int WaterLevelTP =0;
 // OLED display variables
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -389,11 +390,24 @@ int measure_vbat(){
   pinMode(VBAT_DIV, INPUT);
   Serial.println("VBAT_MEAS_A");
   uint32_t vbat_div2 = ReadVoltage(VBAT_DIV);
+  vbat_div2=(vbat_div2 * 195) / 232;
 
-    // if(0){ //write it to screen since we can't tune vbat voltage when serial (usb charger is connected)
-    //   printEP("vbat_V",(String) (vbat_div2*2), "...", "...", "");  //OK
-    //   delay(3000);
-    // }
+    //   division
+
+    // vbat 3.9
+    // bottom r 4.68k
+
+    // top r   4.58k
+
+    // bottom V 2.32
+
+
+
+
+  if(1){ //write it to screen since we can't tune vbat voltage when serial (usb charger is connected)
+    printEP("vbat_V",(String) (vbat_div2*2), "...", "...", "");  //OK
+    delay(3000);
+  }
   return vbat_div2;
 }
 
@@ -558,6 +572,7 @@ void printEP(String headerString, String toPrint1,String toPrint2,String toPrint
     }
   }
   Serial.println("EPAPER_UPDATE_DONE");
+  delay(2500);
 }
 
 uint8_t ConnectToWifi(void){
@@ -650,6 +665,15 @@ int getwaterlevel(){
 void setup() {
 
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
+
+  //blink the led to indicate button press
+  pinMode(LEDPIN, OUTPUT);
+  for(int tempi =0; tempi < 10; tempi++){
+    digitalWrite(LEDPIN, HIGH);
+    delay(500);
+    digitalWrite(LEDPIN, LOW);
+    delay(500);
+  }
   
   // Initialize serial communication
   Serial.begin(115200);
@@ -782,6 +806,7 @@ void setup() {
 
 void loop() {
   if(ProductionMode){
+
       // Clear the display buffer
     if(USE_OLED) display.clearDisplay();
     Serial.println("CHECKING WATER");
@@ -810,6 +835,41 @@ void loop() {
       printEP("Out of water","refill ", "immediately!", "Your plant's ", "counting on you"); //OK
       digitalWrite(LEDPIN, HIGH); //red led indicates water low
       WaterLevel= "Low";
+      WaterLevelTP =0;
+
+      ThingSpeak.setField(myFieldNumber, moistureValue);
+      int status1b = ThingSpeak.writeFields(Channel1, writeAPIKey1);
+      if (status1b == 200) {
+        Serial.println("Channel update successful.");
+      } else {
+        Serial.println("Problem updating channel. HTTP error code " + String(status1b));
+      }
+
+      // Write sensor value of water switch to ThingSpeak
+      ThingSpeak.setField(myFieldNumber, WaterLevelTP); //works with strings?
+      int status2b = ThingSpeak.writeFields(Channel2, writeAPIKey2);
+      if (status2b == 200) {
+        Serial.println("Channel update successful.");
+      } else {
+        Serial.println("Problem updating channel. HTTP error code " + String(status2b));
+      }
+
+      // Write VBAT value of water switch to ThingSpeak
+      ThingSpeak.setField(myFieldNumber, vbat_div2_mv);
+      int status3b = ThingSpeak.writeFields(Channel3, writeAPIKey3);
+      if (status3b == 200) {
+        Serial.println("Channel update successful.");
+      } else {
+        Serial.println("Problem updating channel. HTTP error code " + String(status3b));
+      }
+
+
+      delay(60000);
+
+      Serial.println("SLEEPING");
+      Serial.println(SLEEP_TIME);
+      esp_sleep_enable_timer_wakeup(SLEEP_TIME); // Set wake-up time to 10 seconds
+      esp_deep_sleep_start(); // Enter deep sleep mode
 
       //TODO probably good to add a thingspeak post here so the app can give notification for refill?
       // ThingSpeak.setField(myFieldNumber, WaterLevel); //works with strings?
@@ -831,9 +891,11 @@ void loop() {
     Serial.println("Water Level Good");
     if (switchValue == WATER_IS_HIGH){
       WaterLevel= "High";
+      WaterLevelTP =2;
     }
     else{
       WaterLevel= "Medium";
+      WaterLevelTP =1;
     }
     printEP("Breathing Block","Checking up","on plant", "", ""); //OK
 
@@ -848,10 +910,10 @@ void loop() {
         printOLED("Plant Dry", "Pumping",2);
         printEP("Plant's dry!","Time to splash ", "some water ", "on it!", ""); //OK
         delay(1000);
-
+        printEP("Breathing Block","Here comes ", "the water ", "", ""); //OK
         Serial.println("Pump turned on");
         analogWrite(pumpPin, PUMP_PWM);
-        printEP("Breathing Block","Here comes ", "the water ", "", ""); //OK
+        
         delay(PUMP_ON_TIME); // Run Pump for 30 seconds
 
         //Turn Pump Off
@@ -901,7 +963,7 @@ void loop() {
     }
 
     // Write sensor value of water switch to ThingSpeak
-    ThingSpeak.setField(myFieldNumber, WaterLevel); //works with strings?
+    ThingSpeak.setField(myFieldNumber, WaterLevelTP); //works with strings?
     int status2 = ThingSpeak.writeFields(Channel2, writeAPIKey2);
     if (status2 == 200) {
       Serial.println("Channel update successful.");
@@ -910,7 +972,7 @@ void loop() {
     }
 
     // Write VBAT value of water switch to ThingSpeak
-    ThingSpeak.setField(myFieldNumber, VBAT_VOLT_DIV2);
+    ThingSpeak.setField(myFieldNumber, vbat_div2_mv);
     int status3 = ThingSpeak.writeFields(Channel3, writeAPIKey3);
     if (status3 == 200) {
       Serial.println("Channel update successful.");
