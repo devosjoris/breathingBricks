@@ -56,7 +56,7 @@ uint32_t ReadVoltage(byte ADC_Pin) {
 
 #define USE_EPAPER 1
 #include <SPI.h>
-#include "epd2in7_V2.h"
+#include "epd1in54_V2.h"
 //#include "epd1in54_V2.h" the black and white
 //#include "epd1in54B_V2.h" the black and white and red variant 
 #include "imagedata.h"
@@ -486,10 +486,8 @@ void printOLED(String toPrint1,String toPrint2,uint8_t txtSize){
 void printEP(String headerString, String toPrint1,String toPrint2,String toPrint3, String toPrint4){
 
   if(USE_EPAPER ==0) return;
-
-
-  uint8_t image[EPD_HEIGHT * EPD_WIDTH / 8];
-  Paint paint(image, EPD_WIDTH, EPD_HEIGHT);    //width should be the multiple of 8, this is a sub of the screen,,,
+  unsigned char image[1024];
+  Paint paint(image, 176, 24); //176, 24
   if(EPAPER_STATUS !=0) { //TBD this has to run each time we enable the V3V pins (so on powerup!!)
     Serial.println(F("SSD1306 allocation failed"));
   }
@@ -497,7 +495,7 @@ void printEP(String headerString, String toPrint1,String toPrint2,String toPrint
 
 
     #define FIRSTLINE 32
-    #define LINESPACE 28
+    #define LINESPACE 32
 
     #define BAT_START_X 80
     #define BAT_START_Y 0
@@ -511,26 +509,31 @@ void printEP(String headerString, String toPrint1,String toPrint2,String toPrint
 
     paint.Clear(COLORED);
     paint.DrawStringAt(0, 5, headerString.c_str(), &Font16, UNCOLORED);
-    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE, 0+paint.GetWidth(), FIRSTLINE+paint.GetHeight());
-    delay(1000);
+    epd.SetFrameMemory(paint.GetImage(), 0, FIRSTLINE + 0 * LINESPACE, 0+paint.GetWidth(), paint.GetHeight());
+    //epd.DisplayPartFrame();
+    //delay(100);
     paint.Clear(UNCOLORED);
     paint.DrawStringAt(10, 5,toPrint1.c_str(), &Font16, COLORED);
-    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE + 1 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 1 * LINESPACE +paint.GetHeight());
-    delay(1000);
+    epd.SetFrameMemory(paint.GetImage(), 0, FIRSTLINE + 1 * LINESPACE, 0+paint.GetWidth(), paint.GetHeight());
+    //epd.DisplayPartFrame();
+    //delay(100);
     
     paint.Clear(UNCOLORED);
     paint.DrawStringAt(10, 5, toPrint2.c_str(), &Font16, COLORED);
-    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE + 2 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 2 * LINESPACE +paint.GetHeight());
-    delay(1000);
+    epd.SetFrameMemory(paint.GetImage(), 0, FIRSTLINE + 2 * LINESPACE, 0+paint.GetWidth(), paint.GetHeight());
+    //epd.DisplayPartFrame();
+    //delay(100);
 
     paint.Clear(UNCOLORED);
     paint.DrawStringAt(10, 5, toPrint3.c_str(), &Font16, COLORED);
-    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE + 3 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 3 * LINESPACE +paint.GetHeight());
-    delay(1000);
+    epd.SetFrameMemory(paint.GetImage(), 0, FIRSTLINE + 3 * LINESPACE, 0+paint.GetWidth(), paint.GetHeight());
+    //epd.DisplayPartFrame();
+    //delay(100);
 
     paint.Clear(UNCOLORED);
     paint.DrawStringAt(10, 5, toPrint4.c_str(), &Font16, COLORED);
-    epd.Display_Partial(paint.GetImage(), 0, FIRSTLINE + 4 * LINESPACE, 0+paint.GetWidth(), FIRSTLINE + 4 * LINESPACE +paint.GetHeight());
+    //epd.SetFrameMemory(paint.GetImage(), 0, FIRSTLINE + 4 * LINESPACE, 0+paint.GetWidth(), paint.GetHeight());
+    epd.DisplayFrame();
     delay(1000);
   }
 
@@ -722,21 +725,19 @@ void setup() {
 //tbd the code for the old bigger epaper we used is working so we are keeping it like this for the moment
 //this is the arduino code in the waveshare repository (so not the esp32...)
   if(USE_EPAPER){
-      EPAPER_STATUS = epd.Init();
-      if(EPAPER_STATUS==0){
-        epd.Clear();
-        epd.Display_Base_color(0xff);
-        epd.TurnOnDisplay_Partial();
-      }
+    epd.LDirInit();
+    epd.Clear();
   }
   Serial.println("EPAPER_DONE");
   int x = 0, y = 0, w = 150, h = 151;
 
 
   // Display partial
-  epd.Display_Partial(bb_logo_image_data, x, y, w + x, h + y);
-  delay(2000);
-  epd.Clear();
+  // epd.Display_Partial(bb_logo_image_data, x, y, w + x, h + y);
+  // delay(2000);
+  // epd.Clear();
+
+  
 
   vbat_div2_mv = measure_vbat();
   printEP("Breathing Block","Tuning into", "nature ...", "almost there!", "");  //OK
