@@ -59,11 +59,13 @@ typedef struct _tFont
   
 } sFONT;
 
-extern sFONT Font24;
-extern sFONT Font20;
+//extern sFONT Font24; //not use: reduce firmware size
+//extern sFONT Font20; //not use: reduce firmware size
 extern sFONT Font16;
-extern sFONT Font12;
-extern sFONT Font8;
+//extern sFONT Font12; //not use: reduce firmware size
+//extern sFONT Font8; //not use: reduce firmware size
+
+extern sFONT Fontsym;
 
 #ifdef __cplusplus
 }
