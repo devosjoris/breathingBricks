@@ -24,7 +24,7 @@ int wifi_connected =0;
 #include <ESP32httpUpdate.h>
 #define revisionURL "http://devosjoris.be/FW_REV.txt"
 
-#define FW_REV        30
+#define FW_REV        31
 
 #define PUMP_ON_TIME  10000 //controls the flow
 #define PUMP_PWM      180 //sets the pump power
@@ -268,16 +268,6 @@ unsigned char bb_logo_image_data[] PROGMEM = { // Size 200x200 pixels
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xcf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 };
 
-// Array of all bitmaps for convenience. (Total bytes used to store images in PROGMEM = 2896)
-const int epd_bitmap_allArray_LEN = 1;
-const unsigned char* epd_bitmap_allArray[1] = {
-	bb_logo_image_data
-};
-
-
-
-
-
 #define COLORED     0
 #define UNCOLORED   1
 
@@ -428,7 +418,7 @@ int measure_vbat(){
 
 
   if(0){ //write it to screen since we can't tune vbat voltage when serial (usb charger is connected)
-    printEP("vbat_V",(String) (vbat_div2*2), "...", "...", "");  //OK
+    printEP("vbat_V",(String) (vbat_div2*2), "...", "...", "", 1);  //OK
     delay(3000);
   }
   return vbat_div2;
@@ -493,7 +483,7 @@ void printOLED(String toPrint1,String toPrint2,uint8_t txtSize){
 }
 
 
-void printEP(String headerString, String toPrint1,String toPrint2,String toPrint3, String toPrint4){
+void printEP(String headerString, String toPrint1,String toPrint2,String toPrint3, String toPrint4, uint8_t doWait){
 
   //convert the vbat milivolt into a percentage ...
   int vbat_percent = ((vbat_div2_mv - 1800) *100) / (2100-1800);
@@ -539,12 +529,13 @@ void printEP(String headerString, String toPrint1,String toPrint2,String toPrint
   }
   else{
 
+    #define VBAT_X 10
+    #define VBAT_Y 10
 
-    #define FIRSTLINE 32
+
+    #define FIRSTLINE 42
     #define LINESPACE 32
 
-    #define BAT_START_X 80
-    #define BAT_START_Y 0
     //display the battery and wifi strenght indicators:
     paint.Clear(UNCOLORED);
     String VBAT_0 = " ";
@@ -568,16 +559,16 @@ void printEP(String headerString, String toPrint1,String toPrint2,String toPrint
     }
 
     if(vbat_percent < 16)
-      paint.DrawStringAt(0,   0, VBAT_0.c_str(), &Fontsym, COLORED);
+      paint.DrawStringAt(VBAT_X,   0, VBAT_0.c_str(), &Fontsym, COLORED);
     else if(vbat_percent < 50)
-      paint.DrawStringAt(0,   0, VBAT_1.c_str(), &Fontsym, COLORED);
+      paint.DrawStringAt(VBAT_X,   0, VBAT_1.c_str(), &Fontsym, COLORED);
     else if(vbat_percent < 82)
-      paint.DrawStringAt(0,   0, VBAT_2.c_str(), &Fontsym, COLORED);
+      paint.DrawStringAt(VBAT_X,   0, VBAT_2.c_str(), &Fontsym, COLORED);
     else
-      paint.DrawStringAt(0,   0, VBAT_3.c_str(), &Fontsym, COLORED);
+      paint.DrawStringAt(VBAT_X,   0, VBAT_3.c_str(), &Fontsym, COLORED);
     
     
-    paint.DrawStringAt(18, 5, vbat_percent_string, &Font16, COLORED);
+    paint.DrawStringAt(VBAT_X + 18, 0 + 5, vbat_percent_string, &Font16, COLORED);
 
     if(wifiDash == 0)
       paint.DrawStringAt(140,  0, WIFI_0.c_str(), &Fontsym, COLORED);
@@ -590,12 +581,12 @@ void printEP(String headerString, String toPrint1,String toPrint2,String toPrint
 
 
 
-    epd.SetFrameMemory(paint.GetImage(), 0, 0, 0+paint.GetWidth(), paint.GetHeight());
+    epd.SetFrameMemory(paint.GetImage(), 0, VBAT_Y, 0+paint.GetWidth(), paint.GetHeight());
     //epd.Display_Partial(paint.GetImage(), 0, 10, 0+paint.GetWidth(), 10+paint.GetHeight());
 
 
     paint.Clear(COLORED);
-    paint.DrawStringAt(0, 5, headerString.c_str(), &Font16, UNCOLORED);
+    paint.DrawStringAt(10, 5, headerString.c_str(), &Font16, UNCOLORED);
     epd.SetFrameMemory(paint.GetImage(), 0, FIRSTLINE + 0 * LINESPACE, 0+paint.GetWidth(), paint.GetHeight());
     //epd.DisplayPartFrame();
     //delay(100);
@@ -619,14 +610,17 @@ void printEP(String headerString, String toPrint1,String toPrint2,String toPrint
 
     paint.Clear(UNCOLORED);
     paint.DrawStringAt(10, 5, toPrint4.c_str(), &Font16, COLORED);
-    //epd.SetFrameMemory(paint.GetImage(), 0, FIRSTLINE + 4 * LINESPACE, 0+paint.GetWidth(), paint.GetHeight());
+    epd.SetFrameMemory(paint.GetImage(), 0, FIRSTLINE + 4 * LINESPACE, 0+paint.GetWidth(), paint.GetHeight());
+
     epd.DisplayFrame();
     delay(1000);
   }
 
 
   Serial.println("EPAPER_UPDATE_DONE");
-  delay(2500);
+  if(doWait){
+    delay(2500);
+    }
 }
 
 uint8_t ConnectToWifi(void){
@@ -646,14 +640,14 @@ uint8_t ConnectToWifi(void){
     delay(500);
   }
 
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nConnected to Wi-Fi!");
-      Serial.print("IP Address: ");
-      Serial.println(WiFi.localIP());
-      printEP("Breathing Block","WiFi", "connected","", ""); //OK
-      delay(5000);
-      return 1;
-    }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnected to Wi-Fi!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    printEP("Breathing Block","WiFi", "connected","", "", 0); //OK
+    //delay(5000);
+    return 1;
+  }
 
     //disconnect before switching to wifimanager
     WiFi.disconnect();
@@ -663,11 +657,11 @@ uint8_t ConnectToWifi(void){
     wifiManager.setTimeout(120); // set the portal timeout to 120 seconds
     
     unsigned long startTime = millis();
-      printEP(" Setup WiFi", "connect to", "'BB Connect'", "on phone", ""); //OK
+      printEP(" Setup WiFi", "connect to", "'BB Connect'", "on phone", "", 0); //OK
       if (wifiManager.autoConnect("BB-Connect")) {
           delay(1000); 
           Serial.println("WiFi connected");
-          printEP("Breathing Block","WiFi", "connected","", ""); //OK
+          printEP("Breathing Block","WiFi", "connected","", "", 1); //OK
           //delay(5000);
           return 1;
       } else {
@@ -832,7 +826,7 @@ void setup() {
 
   vbat_div2_mv = measure_vbat();
   epd.Clear(); //because we are displaying a picture we have to do a clear, the printEP is only updating the lines where we add text, not the full screen..
-  printEP("Breathing Block","Tuning into", "nature ...", "almost there!", "");  //OK
+  printEP("Breathing Block","Tuning into", "nature ...", "almost there!", "", 1);  //OK
     //booting is done so stop blinking the led...
   timerAlarmDisable(Timer0_Cfg);
   digitalWrite(LEDPIN, 0);
@@ -844,7 +838,7 @@ void setup() {
   digitalWrite(LEDPIN, HIGH);
 
   if(vbat_div2_mv < 1900){
-    printEP("Battery Low","...", "Recharge", "to continue", "");  //OK
+    printEP("Battery Low","...", "Recharge", "to continue", "", 1);  //OK
     Serial.println("SLEEPING");
     Serial.println(SLEEP_TIME);
     esp_sleep_enable_timer_wakeup(SLEEP_TIME); // Set wake-up time to 10 seconds
@@ -912,7 +906,7 @@ void loop() {
 
     if (switchValue == WATER_IS_LOW) {//both switches are low
       Serial.println("Water Level NOT OK");
-      printEP("Out of water","refill ", "immediately!", "Your plant's ", "counting on you"); //OK
+      printEP("Out of water","refill ", "immediately!", "Your plant's ", "counting on you", 1); //OK
       digitalWrite(LEDPIN, HIGH); //red led indicates water low
       WaterLevel= "Low";
       WaterLevelTP =0;
@@ -945,20 +939,20 @@ void loop() {
       WaterLevel= "Medium";
       WaterLevelTP =1;
     }
-    printEP("Breathing Block","Checking up","on plant", "", ""); //OK
+    printEP("Breathing Block","Checking up","on plant", "", "", 1); //OK
 
     // If moisture level is above a threshold, turn on the pump
     printOLED("Checking", "Moisture",2);
     if (moistureValue > defaultMoisture) { //too dry
       if(switchValue ==WATER_IS_LOW){ //water level is NOK, should never happen duetoo the should_end_program triggered above
         printOLED("Can't water", "plants",1);
-        printEP("Breathing Block","Refill", "Immediately", "and press Reset.", ""); //NA
+        printEP("Breathing Block","Refill", "Immediately", "and press Reset.", "", 1); //NA
       }
       else{
         printOLED("Plant Dry", "Pumping",2);
-        printEP("Plant's dry!","Time to splash ", "some water ", "on it!", ""); //OK
+        printEP("Plant's dry!","Time to splash ", "some water ", "on it!", "", 1); //OK
         delay(1000);
-        printEP("Breathing Block","Here comes ", "the water ", "", ""); //OK
+        printEP("Breathing Block","Here comes ", "the water ", "", "", 1); //OK
         Serial.println("Pump turned on");
         analogWrite(pumpPin, PUMP_PWM);
         
@@ -992,7 +986,7 @@ void loop() {
     }
 
 
-    printEP("All green! ","your plant's", "doing great", "Next check :", formattedDate); //OK
+    printEP("All green! ","your plant's", "doing great", "Next check :", formattedDate,1); //OK
 
 
     //here we update the wifi:
