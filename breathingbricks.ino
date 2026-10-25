@@ -807,8 +807,11 @@ void setup() {
 //tbd the code for the old bigger epaper we used is working so we are keeping it like this for the moment
 //this is the arduino code in the waveshare repository (so not the esp32...)
   if(USE_EPAPER){
+    Serial.println("EPAPER_start");
     epd.LDirInit();
+    Serial.println("EPAPER_A");
     epd.Clear();
+    Serial.println("EPAPER_b");
     //epd.HDirInit();
   }
   Serial.println("EPAPER_DONE");

@@ -53,15 +53,20 @@ void EpdIf::SpiTransfer(unsigned char data) {
 }
 
 int EpdIf::IfInit(void) {
+
+      // On PCB, IO18 is also connected to /CS (Net 34); keep it high-Z input
+    pinMode(18, INPUT);
+    
     pinMode(CS_PIN, OUTPUT);
     pinMode(RST_PIN, OUTPUT);
     pinMode(DC_PIN, OUTPUT);
-    pinMode(BUSY_PIN, INPUT); 
+    pinMode(BUSY_PIN, INPUT_PULLDOWN); // Pull down to prevent floating HIGH
 
     pinMode(PWR_PIN, OUTPUT);
     DigitalWrite(PWR_PIN, 1);
 
-    SPI.begin();
+    //SPI.begin();
+    SPI.begin(CLK_PIN, -1, MOSI_PIN, CS_PIN);
     SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
     return 0;
 }
